@@ -32,6 +32,10 @@ WarZBombDefuse 的第三方附加组件合集 —— 击杀报告 / 单人伤害
 ### JourneyMap 桥接（journeymap-bridge）
 - 把 WBD 队伍数据写入原版 Scoreboard Team，配合客户端 JourneyMap Teams 实现队友可见、敌军隐藏、观战消失
 
+## 🙏 致谢
+
+感谢 [Crazy_Jky](https://www.minebbs.com/members/crazy-jky.88908/) 开发的 [WarZBombDefuse](https://www.minebbs.com/) 插件，并提供的 API 支持。
+
 ## 📦 依赖
 
 - **Java 17**
@@ -74,6 +78,14 @@ modules:
 - `/wbdaddon modules` —— 查看各模块启用状态
 
 ## 🔨 构建
+
+> ⚠️ 构建**前必须先自己把 `wbd.jar` 放进 `libs/` 目录**。
+
+WBDAddon 依赖的是**闭源收费**的 WarZBombDefuse API（`pom.xml` 里是 system-scope，直接指向 `libs/wbd.jar`）。这个 jar **不随本项目代码分发**,你需要自行获取：
+
+1. 从 WarZBombDefuse 作者处取得 `wbd.jar`（闭源,需购买授权）,放入 `libs/`
+2.（可选）放入 `taczspigotbridge.jar`,以获得枪械名显示与更准确的击杀归属
+3. 然后再构建:
 
 ```bash
 mvn clean package
