@@ -1,0 +1,104 @@
+# ============================================================
+# WBDAddon 配置文件
+# WarZBombDefuse 的第三方附加组件合集
+#
+# 修改后执行 /wbdaddon reload 即可生效，无需重启服务器。
+# 颜色代码用 & 符号，例如 &c 表示红色。
+# ============================================================
+
+# 模块总开关。每个模块可以独立启停，互不影响。
+modules:
+
+  # ----------------------------------------------------------
+  # 击杀报告模块
+  # 功能：替换默认的淘汰消息，显示击杀者与武器；
+  #       回合结束时给每位玩家单独发送各自的伤害统计。
+  # ----------------------------------------------------------
+  kill-reports:
+    enabled: true
+
+    # 是否替换 WarZBombDefuse 默认的淘汰消息
+    replace-default-death-message: true
+
+    # 是否在回合结束时给每位玩家单独发送各自的伤害统计
+    show-round-summary: true
+
+    # 伤害数值保留几位小数
+    damage-decimal-places: 1
+
+    # 有击杀者时的死亡消息（主动句，避免被字句的翻译腔）
+    # 占位符：%victim% 被淘汰者，%killer% 击杀者，%weapon% 武器名
+    death-message-with-killer: "&c%killer% &7使用 &e%weapon% &7淘汰了 &c%victim%"
+
+    # 无击杀者时的死亡消息（自杀、C4 爆炸、摔落等）
+    # 占位符：%victim% 被淘汰者
+    death-message-no-killer: "&c%victim% &7已被淘汰"
+
+    # 每位玩家独享的伤害统计标题和页脚（用青色 &b 与 WBD 淘汰消息区分）
+    round-summary-title: "&b====== 你的伤害统计 ======"
+    round-summary-footer: "&b========================"
+
+    # 每个玩家对自己造成伤害的目标的单行格式
+    # 占位符：%victim% 被打的玩家，%damage% 你对 TA 造成的伤害
+    damage-line-format: "你对 &f%victim% &7造成了 &b%damage% &7伤害"
+
+  # ----------------------------------------------------------
+  # 比赛状态显示模块
+  # 功能：顶部（ActionBar）显示 T / CT 当前存活人数；
+  #       炸弹安放后用 BossBar 显示倒计时进度条，爆/拆后消失。
+  # ----------------------------------------------------------
+  match-status:
+    enabled: true
+
+    # 是否在顶部用 ActionBar 显示双方存活人数
+    enable-alive-action-bar: true
+
+    # 是否用 BossBar 显示炸弹倒计时（安放后出现，爆/拆后消失）
+    enable-bomb-bar: true
+
+    # 刷新间隔（tick）。20 = 1 秒，调大省资源，调小更实时
+    update-interval-ticks: 2
+
+    # 存活人数文字格式
+    # 占位符：%t_alive%/%t_total% T 存活/总，%ct_alive%/%ct_total% CT 存活/总
+    alive-line-format: "&cT 存活 &f%t_alive%&7/&f%t_total%   &bCT 存活 &f%ct_alive%&7/&f%ct_total%"
+
+    # 炸弹倒计时 BossBar 的标题、颜色、样式
+    # 颜色可选：PINK BLUE RED GREEN YELLOW PURPLE WHITE
+    # 样式可选：SOLID SEGMENTED_6 SEGMENTED_10 SEGMENTED_12 SEGMENTED_20
+    bomb-bar-title: "&c炸弹 &7还有 &e%sec% &7秒爆炸"
+    bomb-bar-color: RED
+    bomb-bar-style: SOLID
+
+  # ----------------------------------------------------------
+  # 竞技场饥饿锁定模块
+  # 功能：竞技场玩家跑步会消耗饥饿、饿到跑不动；满饥饿又触发自然回血。
+  #       MC 规则：跑速只在饥饿 <6 变慢，自然回血需饥饿 ≥18。
+  #       所以把竞技场玩家饥饿恒定到 17（跑速恒定、不自然回血），
+  #       并把饱和度清零封死回血条件。只作用于竞技场玩家，不影响全局。
+  # ----------------------------------------------------------
+  arena-food:
+    enabled: true
+
+    # 重置间隔（tick）。20 = 1 秒
+    update-interval-ticks: 5
+
+    # 恒定的饥饿值（10-19 都安全：跑速正常且不回血；默认 17 视觉接近满）
+    food-level: 17
+
+    # 恒定的饱和度（0 封死自然回血）
+    saturation: 0
+
+  # ----------------------------------------------------------
+  # JourneyMap 桥接模块
+  # 功能：把 WarZBombDefuse 的队伍数据同步到原版 Scoreboard Team，
+  #       配合 JourneyMap Teams 实现队友可见、敌军隐藏、观战消失。
+  # ----------------------------------------------------------
+  journeymap-bridge:
+    enabled: true
+
+    # 同步间隔（tick）。20 tick = 1 秒。调大可以降低性能开销。
+    sync-interval-ticks: 20
+
+    # 原版队伍名前缀，避免和其他插件的队伍冲突
+    team-prefix: "wbd_"

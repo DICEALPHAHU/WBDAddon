@@ -1,0 +1,32 @@
+name: WBDAddon
+version: 1.0.0
+main: alphahu.wbdaddon.WBDAddon
+api-version: '1.20'
+authors: [AlphaHu]
+description: WarZBombDefuse 的第三方附加组件合集，包含击杀报告、回合伤害统计、JourneyMap 桥接等模块。
+website: https://github.com/你的用户名/WBDAddon
+
+# 硬依赖：没有 WarZBombDefuse 就不加载
+depend:
+  - WarZBombDefuse
+
+# 软依赖：有则更好，没有也能跑
+softdepend:
+  - TacZSpigotBridge
+  - PlaceholderAPI
+  - JourneyMap
+
+commands:
+  wbdaddon:
+    description: WBDAddon 主命令
+    aliases: [wbdaddon, wbdreport]
+    usage: /wbdaddon help
+    permission: wbdaddon.use
+
+permissions:
+  wbdaddon.use:
+    description: 允许使用 WBDAddon 的基础命令
+    default: true
+  wbdaddon.admin:
+    description: 允许重载配置、管理模块
+    default: op

@@ -1,0 +1,110 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>alphahu</groupId>
+    <artifactId>WBDAddon</artifactId>
+    <version>1.0.0</version>
+    <packaging>jar</packaging>
+
+    <name>WBDAddon</name>
+    <description>WarZBombDefuse 的第三方附加组件合集，包含击杀报告、回合伤害统计、JourneyMap 桥接等模块。</description>
+
+    <properties>
+        <java.version>17</java.version>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    </properties>
+
+    <repositories>
+        <!-- Paper API 仓库 -->
+        <repository>
+            <id>papermc</id>
+            <url>https://repo.papermc.io/repository/maven-public/</url>
+        </repository>
+        <!-- PlaceholderAPI 备用仓库，原地址 repo.extendedclip.com 有时连接失败 -->
+        <repository>
+            <id>placeholderapi</id>
+            <url>https://repo.helpch.at/releases/</url>
+        </repository>
+    </repositories>
+
+    <dependencies>
+        <!-- Paper API，编译期提供，包含 Folia 调度器接口 -->
+        <dependency>
+            <groupId>io.papermc.paper</groupId>
+            <artifactId>paper-api</artifactId>
+            <version>1.20.1-R0.1-SNAPSHOT</version>
+            <scope>provided</scope>
+        </dependency>
+
+        <!-- WarZBombDefuse 本地依赖，需将 wbd.jar 放入 libs/ 目录 -->
+        <dependency>
+            <groupId>com.warzbombdefuse</groupId>
+            <artifactId>wbd-api</artifactId>
+            <version>1.0</version>
+            <scope>system</scope>
+            <systemPath>${project.basedir}/libs/wbd.jar</systemPath>
+        </dependency>
+
+        <!-- PlaceholderAPI，可选依赖，编译期提供。
+             运行时服主没装 PAPI 时，只要代码不直接调用 PAPI 的类，插件正常加载。 -->
+        <dependency>
+            <groupId>me.clip</groupId>
+            <artifactId>placeholderapi</artifactId>
+            <version>2.11.6</version>
+            <scope>provided</scope>
+        </dependency>
+
+        <!-- TaczSpigotBridage，可选依赖，（如果你加Tacz枪械那这个是必须的），编译期提供。-->
+        <dependency>
+            <groupId>com.tacz.bridge</groupId>
+            <artifactId>taczspigotbridge-api</artifactId>
+            <version>1.0</version>
+            <scope>system</scope>
+            <systemPath>${project.basedir}/libs/taczspigotbridge.jar</systemPath>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <defaultGoal>clean package</defaultGoal>
+
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.13.0</version>
+                <configuration>
+                    <source>${java.version}</source>
+                    <target>${java.version}</target>
+                </configuration>
+            </plugin>
+
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-shade-plugin</artifactId>
+                <version>3.5.3</version>
+                <configuration>
+                    <createDependencyReducedPom>false</createDependencyReducedPom>
+                    <!-- 暂无需 shade 的第三方库；如以后引入，在此加 <relocations> -->
+                </configuration>
+                <executions>
+                    <execution>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>shade</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+
+        <resources>
+            <resource>
+                <directory>src/main/resources</directory>
+                <filtering>true</filtering>
+            </resource>
+        </resources>
+    </build>
+</project>
