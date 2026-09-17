@@ -6,7 +6,7 @@ WarZBombDefuse 的第三方附加组件合集 —— 击杀报告 / 单人伤害
 
 > 已在 **Arclight 1.20.1**（Forge + Bukkit 混合端）环境实测运行。
 
-## ✨ 功能
+## 功能
 
 | 模块 | id | 说明 |
 | --- | --- | --- |
@@ -32,11 +32,11 @@ WarZBombDefuse 的第三方附加组件合集 —— 击杀报告 / 单人伤害
 ### JourneyMap 桥接（journeymap-bridge）
 - 把 WBD 队伍数据写入原版 Scoreboard Team，配合客户端 JourneyMap Teams 实现队友可见、敌军隐藏、观战消失
 
-## 🙏 致谢
+## 致谢
 
 感谢 [Crazy_Jky](https://www.minebbs.com/members/crazy-jky.88908/) 开发的 [WarZBombDefuse](https://www.minebbs.com/resources/folia-warzbombdefuse-cs-t-ct-tacz.17007/) 插件，并提供的 API 支持。
 
-## 📦 依赖
+## 依赖
 
 - **Java 17**
 - **Paper / Spigot / Arclight 1.20.1**
@@ -44,7 +44,7 @@ WarZBombDefuse 的第三方附加组件合集 —— 击杀报告 / 单人伤害
 - **TacZSpigotBridge**（可选，提供枪械名与更准确的击杀归属）
 - **JourneyMap**（仅桥接模块需要）
 
-## 🔧 安装
+## 安装
 
 1. 把 `WBDAddon-1.0.0.jar` 放进服务端 `plugins`
 2. 重启服务器（或 `/reload`）
@@ -77,14 +77,14 @@ modules:
 - `/wbdaddon reload` —— 重载配置并重新启停模块
 - `/wbdaddon modules` —— 查看各模块启用状态
 
-## 🔨 构建
+## 构建
 
 > ⚠️ 构建**前必须先自己把 `wbd.jar` 放进 `libs/` 目录**。
 
-WBDAddon 依赖的是**闭源收费**的 WarZBombDefuse API（`pom.xml` 里是 system-scope，直接指向 `libs/wbd.jar`）。这个 jar **不随本项目代码分发**,你需要自行获取：
+WBDAddon 依赖的是**闭源收费**的 WarZBombDefuse API（`pom.xml` 里是 system-scope，直接指向 `libs/wbd.jar`）。这个 jar **不随本项目代码分发**,你需要自行获取（简而言之就是得去[Minebbs](https://www.minebbs.com/resources/folia-warzbombdefuse-cs-t-ct-tacz.17007/)买）：
 
-1. 从 WarZBombDefuse 作者处取得 `wbd.jar`（闭源,需购买授权）,放入 `libs/`
-2.（可选）放入 `taczspigotbridge.jar`,以获得枪械名显示与更准确的击杀归属
+1. 从 WarZBombDefuse 作者处取得 `wbd.jar` ,放入 `libs/`
+2.（可选，推荐）放入 `taczspigotbridge.jar`,以获得枪械名显示与更准确的击杀归属
 3. 然后再构建:
 
 ```bash
@@ -95,7 +95,7 @@ mvn clean package
 
 ## 📜 许可证
 
-本项目基于 **GNU General Public License v3.0（GPL-3.0）** 开源，详见 [LICENSE](LICENSE)。
+开源协议GPL-3.0。互联网共享精神，所以**不准拿我的代码搞闭源！** 详见仓库 LICENSE 文件。
 
 ## 💬 反馈
 
