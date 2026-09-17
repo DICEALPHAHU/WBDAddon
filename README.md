@@ -95,7 +95,7 @@ mvn clean package
 
 ## 📜 许可证
 
-开源。详见仓库 LICENSE 文件。
+本项目基于 **GNU General Public License v3.0（GPL-3.0）** 开源，详见 [LICENSE](LICENSE)。
 
 ## 💬 反馈
 
