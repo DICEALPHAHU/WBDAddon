@@ -52,7 +52,7 @@ WarZBombDefuse 的第三方附加组件合集 —— 击杀报告 / 单人伤害
 
 > 旧配置升级后建议删除或合并新配置项，让新增模块段落生效。
 
-## ⚙️ 配置
+## 配置
 
 ```yaml
 modules:
@@ -93,11 +93,11 @@ mvn clean package
 
 产物在 `target/WBDAddon-1.0.0.jar`。
 
-## 📜 许可证
+## 许可证
 
 开源协议GPL-3.0。互联网共享精神，所以**不准拿我的代码搞闭源！** 详见仓库 LICENSE 文件。
 
-## 💬 反馈
+## 反馈
 
 - 反馈 QQ：2387629002
 - 欢迎提 Issue 与 Pull Request
