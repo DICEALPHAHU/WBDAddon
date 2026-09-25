@@ -33,6 +33,7 @@ WarZBombDefuse 的第三方附加组件合集 —— 击杀报告 / 单人伤害
 - 音量决定可听距离（约 16 × 音量 格，默认 16.0 ≈ 256 格，够覆盖整张图）；客户端会对音量限幅，调大只传得更远，不会把近处玩家震聋
 - 听众默认只限该竞技场内玩家（含已淘汰的旁观者），与 WBD 自身 `bomb-planted` 的做法一致；也可切到 `world` 连大厅一起播
 - 中断与成功音效默认留空，因为 WBD 本体已经有了，避免重复出声
+- 音效可换：默认用 `BLOCK_NOTE_BLOCK_BIT`（8-bit 芯片音色）做电子「嘀嘀嘀」，用 `/wbdaddon sound` 可以试听并查看推荐清单
 
 ### 竞技场饥饿锁定（arena-food）
 - 跑步消耗饥饿、饿到跑不动，或满饥饿自然回血，都会不公平
@@ -63,7 +64,7 @@ WarZBombDefuse 的第三方附加组件合集 —— 击杀报告 / 单人伤害
 
 ## 安装
 
-1. 把 `WBDAddon-1.0.1.jar` 放进服务端 `plugins`
+1. 把 `WBDAddon-1.0.2.jar` 放进服务端 `plugins`
 2. 重启服务器（或 `/reload`）
 3. 插件自动生成 `config.yml`，按需修改
 
@@ -86,13 +87,15 @@ modules:
     alive-display-style: number     # number = 数字「3/5」；block = 方块串
   bomb-defuse-sound:
     enabled: true
-    start-sound: BLOCK_LEVER_CLICK  # 开始拆弹提示音，留空 "" 关闭
-    start-volume: 16.0              # 16 × 音量 ≈ 可听格数
-    tick-sound: BLOCK_NOTE_BLOCK_HAT # 拆弹过程中的滴答声，留空 "" 关闭
-    tick-interval-ticks: 10         # 滴答间隔，20 tick = 1 秒
-    cancel-sound: ""                # 默认留空：WBD 本体已有 cancel 音效
-    complete-sound: ""              # 默认留空：WBD 本体已有 bomb-defused 音效
-    audience: arena                 # arena = 仅该竞技场；world = 整个世界
+    start-sound: BLOCK_NOTE_BLOCK_BIT   # 开始拆弹：低沉一声「嘟」，留空 "" 关闭
+    start-pitch: 0.7
+    start-volume: 16.0                  # 16 × 音量 ≈ 可听格数
+    tick-sound: BLOCK_NOTE_BLOCK_BIT    # 拆弹中：电子「嘀嘀嘀」，留空 "" 关闭
+    tick-pitch: 1.8
+    tick-interval-ticks: 10             # 滴答间隔，20 tick = 1 秒
+    cancel-sound: ""                    # 默认留空：WBD 本体已有 cancel 音效
+    complete-sound: ""                  # 默认留空：WBD 本体已有 bomb-defused 音效
+    audience: arena                     # arena = 仅该竞技场；world = 整个世界
   arena-food:
     enabled: true
     update-interval-ticks: 5        # 重置间隔
@@ -119,6 +122,7 @@ modules:
 
 - `/wbdaddon reload` —— 重载配置并重新启停模块
 - `/wbdaddon modules` —— 查看各模块启用状态
+- `/wbdaddon sound <音效名> [音调]` —— 试听拆弹提示音（连播三次）；不带参数列出推荐音效清单
 
 ## 构建
 
@@ -134,7 +138,7 @@ WBDAddon 依赖的是**闭源收费**的 WarZBombDefuse API（`pom.xml` 里是 s
 mvn clean package
 ```
 
-产物在 `target/WBDAddon-1.0.1.jar`。
+产物在 `target/WBDAddon-1.0.2.jar`。
 
 ## 📜 许可证
 

@@ -262,6 +262,29 @@ public class DefuseSoundNotifier implements Listener {
         }
     }
 
+    /**
+     * 试听：以玩家自身位置为音源连播三次，让服主不用真去拆弹就能感受节奏与音色。
+     *
+     * <p>连播三次而非一次，是因为「嘀嘀嘀」的密度感只有连续播放才听得出来。
+     *
+     * @return 音效名是否有效（无效时已被 {@link #parseSound} 记过日志）
+     */
+    public boolean playPreview(Player player, String soundName, float pitch) {
+        Sound sound = parseSound(soundName);
+        if (sound == null) return false;
+
+        for (int i = 0; i < 3; i++) {
+            // lambda 只能捕获 effectively final 的变量，故先把延迟取成副本
+            final long delay = i * 4L;
+            Bukkit.getScheduler().runTaskLater(plugin, () -> {
+                if (player.isOnline()) {
+                    player.playSound(player.getLocation(), sound, 1.0f, pitch);
+                }
+            }, delay);
+        }
+        return true;
+    }
+
     /** 取竞技场 ID：事件里没给时，用拆弹者所在的竞技场反查。 */
     private String resolveArenaId(String fromEvent, Player defuser) {
         if (fromEvent != null) return fromEvent;

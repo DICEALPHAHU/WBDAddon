@@ -96,19 +96,21 @@ modules:
   bomb-defuse-sound:
     enabled: true
 
-    # 开始拆弹提示音。
+    # 开始拆弹提示音：低沉一声「嘟」，与滴答的高音形成电子设备启动感。
     # 音效名必须是本服务端存在的 Bukkit Sound 枚举名，留空 "" 表示关闭。
+    # 挑音效用 /wbdaddon sound 试听，不带参数会列出推荐清单。
     # 音量决定可听距离，约等于 16 × 音量（格）：16.0 ≈ 256 格，够覆盖整张图。
     # 客户端会对音量限幅，所以调大只会传得更远，不会把近处玩家震聋。
-    start-sound: BLOCK_LEVER_CLICK
+    start-sound: BLOCK_NOTE_BLOCK_BIT
     start-volume: 16.0
-    start-pitch: 1.2
+    start-pitch: 0.7
 
-    # 拆弹过程中的滴答声。留空 "" 关闭滴答
-    tick-sound: BLOCK_NOTE_BLOCK_HAT
+    # 拆弹过程中的滴答声。留空 "" 关闭滴答。
+    # 默认用 8-bit 芯片音色，也就是电子设备那种「嘀嘀嘀」
+    tick-sound: BLOCK_NOTE_BLOCK_BIT
     tick-volume: 16.0
-    tick-pitch: 1.5
-    # 滴答间隔（tick）。20 tick = 1 秒
+    tick-pitch: 1.8
+    # 滴答间隔（tick）。20 tick = 1 秒。调小更急促，调大更从容
     tick-interval-ticks: 10
 
     # 拆弹中断（松手、被打断、拆弹者死亡）提示音。

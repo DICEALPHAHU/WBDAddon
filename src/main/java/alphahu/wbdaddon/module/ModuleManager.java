@@ -82,6 +82,19 @@ public class ModuleManager {
         return enabledModules.contains(module);
     }
 
+    /**
+     * 按 id 查找已注册的模块（不管是否启用），找不到返回 null。
+     * 供命令等需要访问具体模块能力的地方使用。
+     */
+    public AddonModule getModule(String id) {
+        for (AddonModule module : modules) {
+            if (module.getId().equals(id)) {
+                return module;
+            }
+        }
+        return null;
+    }
+
     /** 获取全部已注册模块（不可修改）。 */
     public List<AddonModule> getModules() {
         return Collections.unmodifiableList(modules);

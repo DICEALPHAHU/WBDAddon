@@ -3,6 +3,7 @@ package alphahu.wbdaddon.module;
 import alphahu.wbdaddon.WBDAddon;
 import alphahu.wbdaddon.defusesound.DefuseSoundNotifier;
 import org.bukkit.Bukkit;
+import org.bukkit.entity.Player;
 import org.bukkit.event.HandlerList;
 
 /**
@@ -59,5 +60,14 @@ public class BombDefuseSoundModule implements AddonModule {
             notifier = null;
         }
         plugin.getLogger().info("拆弹声音提示已卸载。");
+    }
+
+    /**
+     * 试听音效（供 /wbdaddon sound 使用）。
+     *
+     * @return 模块未启用或音效名无效时返回 false
+     */
+    public boolean playPreview(Player player, String soundName, float pitch) {
+        return notifier != null && notifier.playPreview(player, soundName, pitch);
     }
 }
