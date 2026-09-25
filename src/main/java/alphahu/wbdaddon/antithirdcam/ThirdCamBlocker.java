@@ -82,8 +82,12 @@ public class ThirdCamBlocker implements Listener {
     /** hideEntity 失败是否已经报过，避免每周期刷屏。 */
     private boolean hideFailureLogged;
 
+    /** 协议层隐藏器：ProtocolLib 可用时由它接管可见性。 */
+    private final OverlayProtocolHider protocolHider;
+
     public ThirdCamBlocker(WBDAddon plugin) {
         this.plugin = plugin;
+        this.protocolHider = new OverlayProtocolHider(plugin);
         this.usePassenger = "passenger".equalsIgnoreCase(plugin.getConfig()
                 .getString("modules.antithirdcam.follow-mode", "teleport"));
     }
@@ -91,6 +95,9 @@ public class ThirdCamBlocker implements Listener {
     public void start() {
         long interval = Math.max(1, plugin.getConfig()
                 .getLong("modules.antithirdcam.update-interval-ticks", 20));
+        // 优先启用协议层隐藏：Arclight 上 Bukkit 的 hideEntity 方法存在却不生效
+        protocolHider.start();
+
         // 遮挡面的位置更新方式由 follow-mode 决定，这里只做低频的「检查并在丢失时重建」
         task = Bukkit.getScheduler().runTaskTimer(plugin, this::tick, 20L, interval);
 
@@ -115,6 +122,7 @@ public class ThirdCamBlocker implements Listener {
             removeEntity(display);
         }
         overlays.clear();
+        protocolHider.stop();
     }
 
     private void tick() {
@@ -139,15 +147,13 @@ public class ThirdCamBlocker implements Listener {
             }
         }
 
-        // 可见性：每个周期对所有人重算一遍，不做增量记录。
-        //
-        // 这里刻意不看 setVisibleByDefault 的探测结果：部分混合端（如 Arclight）
-        // 这个方法的签名存在、调用也不报错，但行为并不完整。一旦据此认定
-        // 「已经默认隐藏了」而跳过 hideEntity，遮挡面就会对所有人可见
-        // ——正是「黑块挂在别人身上」的成因。hideEntity 是 Spigot 级 API，
-        // 一定存在，所以无条件走它，两者叠加没有副作用。
-        for (Player observer : Bukkit.getOnlinePlayers()) {
-            hideAllOverlaysFrom(observer);
+        // 可见性维护。协议层接管后就不走这条了：Arclight 上 Bukkit 的
+        // hideEntity / setVisibleByDefault 都是「方法存在但不生效」的空壳，
+        // 靠它们藏不住遮挡面。
+        if (!protocolHider.isActive()) {
+            for (Player observer : Bukkit.getOnlinePlayers()) {
+                hideAllOverlaysFrom(observer);
+            }
         }
     }
 
@@ -181,6 +187,8 @@ public class ThirdCamBlocker implements Listener {
      * 此刻的 hideEntity 会被随后到达的实体包盖掉，等于白做。
      */
     private void resyncLater(Player player) {
+        // 协议层是拦包实现的，与「服务端重发实体」无关，无需重来一遍
+        if (protocolHider.isActive()) return;
         Bukkit.getScheduler().runTask(plugin, () -> {
             if (player.isOnline()) {
                 hideAllOverlaysFrom(player);
@@ -296,9 +304,16 @@ public class ThirdCamBlocker implements Listener {
         // 无论它是否真的生效，都对其他在线玩家 hideEntity ——
         // 免得新建的遮挡面出现可见窗口
         applyDefaultInvisibility(display);
-        for (Player other : Bukkit.getOnlinePlayers()) {
-            if (other.equals(player)) continue;
-            other.hideEntity(plugin, display);
+
+        // 协议层隐藏：登记之后，发给别人的生成/位置/元数据包会被直接取消
+        protocolHider.register(display, player.getUniqueId());
+
+        // 没启用协议层时才退回 Bukkit API（Paper 系服务端上有效）
+        if (!protocolHider.isActive()) {
+            for (Player other : Bukkit.getOnlinePlayers()) {
+                if (other.equals(player)) continue;
+                other.hideEntity(plugin, display);
+            }
         }
         return display;
     }
@@ -382,6 +397,8 @@ public class ThirdCamBlocker implements Listener {
 
     private void removeEntity(TextDisplay display) {
         if (display != null && display.isValid()) {
+            // 先注销再删除，避免实体 ID 被复用后误伤别的实体
+            protocolHider.unregister(display);
             display.remove();
         }
     }

@@ -17,6 +17,9 @@ softdepend:
   - TacZSpigotBridge
   - PlaceholderAPI
   - JourneyMap
+  # 防第三人称需要它：Arclight 上 Bukkit 的 hideEntity 方法存在却不生效，
+  # 「遮挡面只对本人可见」只能靠协议层拦包实现
+  - ProtocolLib
 
 commands:
   wbdaddon:

@@ -35,6 +35,12 @@
             <id>placeholderapi</id>
             <url>https://repo.helpch.at/releases/</url>
         </repository>
+        <!-- ProtocolLib：遮挡面「只对本人可见」必须走协议层，
+             因为 Arclight 上 Player#hideEntity 虽然存在却不起作用 -->
+        <repository>
+            <id>dmulloy2</id>
+            <url>https://repo.dmulloy2.net/repository/public/</url>
+        </repository>
     </repositories>
 
     <dependencies>
@@ -61,6 +67,18 @@
             <groupId>me.clip</groupId>
             <artifactId>placeholderapi</artifactId>
             <version>2.11.6</version>
+            <scope>provided</scope>
+        </dependency>
+
+        <!-- ProtocolLib，可选依赖，编译期提供。
+             防第三人称要靠「遮挡面只对本人可见」，而这件事在 Arclight 上
+             只能通过拦数据包实现：Bukkit 的 Player#hideEntity 在那边
+             方法存在、调用不报错，但完全不生效。
+             运行时服主没装 ProtocolLib 时，只有防第三人称模块降级，其余功能不受影响。 -->
+        <dependency>
+            <groupId>com.comphenix.protocol</groupId>
+            <artifactId>ProtocolLib</artifactId>
+            <version>5.3.0</version>
             <scope>provided</scope>
         </dependency>
 

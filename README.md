@@ -48,7 +48,9 @@ WarZBombDefuse 的第三方附加组件合集 —— 击杀报告 / 单人伤害
 - 给参赛玩家挂一块巨大的黑色遮挡面，且**只对该玩家本人可见**；切到第三人称时视野会被糊住，隔着掩体偷看就失去意义了
 - 遮挡面默认每 tick 主动跟随玩家（`follow-mode: teleport`），也可切回开销更低的「乘客」机制（`passenger`）
 - 只在竞技场内对**参赛且仍存活**的玩家生效；观战者、大厅玩家、以及本回合已阵亡的人都不受影响
-- 玩家重生、切换世界、以及被传送时，会在下一 tick 立即重新同步可见性；此外每个检查周期还会对全体玩家重算一遍——**不做增量记录**，因为服务端在这些场景会重发实体、令 `hideEntity` 失效，增量方案漏掉一个场景就会「糊脸」且极难排查
+- **可见性由 ProtocolLib 在数据包层拦截实现**：遮挡面的生成 / 位置 / 元数据包只放行给本人，其他玩家的客户端压根收不到这个实体
+- 之所以不用 Bukkit 的 `hideEntity`：实测 Arclight 上它**方法存在、调用不报错、但完全不生效**（`setVisibleByDefault` 同理），于是遮挡面对所有人可见，看着就像「黑块挂在别人身上」
+- 没装 ProtocolLib 时模块仍会启用并退回 Bukkit API：Paper 系服务端上没问题，Arclight 上则会露馅——用 `/wbdaddon diag` 可确认当前环境
 - 实现方案参考开源插件 [AntiF5](https://github.com/ladakx/AntiF5)
 
 ## 致谢
@@ -61,6 +63,7 @@ WarZBombDefuse 的第三方附加组件合集 —— 击杀报告 / 单人伤害
 - **Paper / Spigot / Arclight 1.20.1**
 - **WarZBombDefuse**（必装）
 - **TacZSpigotBridge**（可选，提供枪械名与更准确的击杀归属）
+- **ProtocolLib**（可选；但**防第三人称模块在 Arclight 上必须装**，否则遮挡面藏不住）
 - **JourneyMap**（仅桥接模块需要）
 
 ## 安装

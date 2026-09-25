@@ -168,6 +168,13 @@ modules:
   antithirdcam:
     enabled: true
 
+    # 本模块需要 ProtocolLib（软依赖）。遮挡面必须「只对本人可见」，
+    # 而在 Arclight 这类混合端上，Bukkit 的 Player#hideEntity 虽然方法存在、
+    # 调用也不报错，却完全不生效（Entity#setVisibleByDefault 同理），
+    # 只能改由数据包层拦截实现。没装 ProtocolLib 时模块仍会启用，
+    # 但遮挡面会对所有人可见（表现为「黑块挂在别人身上」）。
+    # 用 /wbdaddon diag 可以确认当前环境是否满足。
+
     # 检查间隔（tick）。每个周期会重新判断「谁该有遮挡面」，并把遮挡面对
     # 不该看见它的玩家重新隐藏一遍。20 = 1 秒；调小自愈更快，开销也更高
     update-interval-ticks: 20

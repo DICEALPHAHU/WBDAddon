@@ -1,6 +1,7 @@
 package alphahu.wbdaddon.command;
 
 import alphahu.wbdaddon.WBDAddon;
+import alphahu.wbdaddon.antithirdcam.OverlayProtocolHider;
 import alphahu.wbdaddon.module.AddonModule;
 import alphahu.wbdaddon.module.BombDefuseSoundModule;
 import org.bukkit.Bukkit;
@@ -130,6 +131,11 @@ public class WBDAddonCommand implements CommandExecutor, TabCompleter {
                 Display.class, "setViewRange", float.class);
         reportMethod(sender, "Player#teleportAsync(Location)",
                 Player.class, "teleportAsync", Location.class);
+
+        boolean protocolLib = OverlayProtocolHider.isProtocolLibPresent();
+        sender.sendMessage(color("&eProtocolLib 插件 &7-> "
+                + (protocolLib ? "&a已安装（防第三人称走协议层隐藏）"
+                               : "&c未安装（防第三人称无法做到只对本人可见）")));
 
         sender.sendMessage(color("&6==============================="));
     }
