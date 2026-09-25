@@ -1,6 +1,6 @@
 # WBDAddon
 
-WarZBombDefuse 的第三方附加组件合集 —— 击杀报告 / 单人伤害统计 / 比赛状态显示 / 竞技场饥饿锁定 / 防第三人称偷看 / JourneyMap 队伍桥接。
+WarZBombDefuse 的第三方附加组件合集 —— 击杀报告 / 单人伤害统计 / 比赛状态显示 / 拆弹声音提示 / 竞技场饥饿锁定 / 防第三人称偷看 / JourneyMap 队伍桥接。
 
 每个功能都是独立模块，通过 `config.yml` 单独开关，互不影响。无需改动 WBD 本体，纯附加。
 
@@ -12,6 +12,7 @@ WarZBombDefuse 的第三方附加组件合集 —— 击杀报告 / 单人伤害
 | --- | --- | --- |
 | 击杀报告 | `kill-reports` | 替换默认淘汰消息、显示击杀者与武器；回合结束给每个玩家单独发送自己的伤害统计 |
 | 比赛状态 | `match-status` | 顶部 ActionBar 显示 T/CT 存活人数；炸弹安放后 BossBar 显示倒计时进度条 |
+| 拆弹声音提示 | `bomb-defuse-sound` | CT 开始拆弹时在 C4 位置向全图播放可定位的提示音与滴答声，让 T 能回防博弈 |
 | 竞技场饥饿锁定 | `arena-food` | 竞技场玩家饥饿恒定到安全值：跑速恒定、不自然回血 |
 | JourneyMap 桥接 | `journeymap-bridge` | 同步 WBD 队伍数据到原版 Team，配合 JourneyMap Teams 队友可见、敌军隐藏、观战消失 |
 | 防第三人称 | `antithirdcam` | 给参赛玩家挂一块只对本人可见的巨大遮挡面，让第三人称视角失去隔墙偷看的价值 |
@@ -24,6 +25,14 @@ WarZBombDefuse 的第三方附加组件合集 —— 击杀报告 / 单人伤害
 ### 比赛状态（match-status）
 - 屏幕顶部实时显示双方存活人数：`T 存活 3/5   CT 存活 4/5`
 - 炸弹安放后头顶 BossBar 显示倒计时进度条，爆 / 拆后消失，颜色与样式可配置
+
+### 拆弹声音提示（bomb-defuse-sound）
+- WBD 本体**只在拆除成功与被中断时有音效，开始拆弹与整个拆弹过程是静音的**，T 阵营因此无法察觉 CT 在拆弹
+- 本模块在 C4 的位置播放一声「开始拆弹」提示音，随后按固定间隔持续播放滴答声
+- 声音以 C4 为音源，**带方位与距离衰减**——T 能听出「有人在拆、大概在哪个方向」，而不是只收到一句广播
+- 音量决定可听距离（约 16 × 音量 格，默认 16.0 ≈ 256 格，够覆盖整张图）；客户端会对音量限幅，调大只传得更远，不会把近处玩家震聋
+- 听众默认只限该竞技场内玩家（含已淘汰的旁观者），与 WBD 自身 `bomb-planted` 的做法一致；也可切到 `world` 连大厅一起播
+- 中断与成功音效默认留空，因为 WBD 本体已经有了，避免重复出声
 
 ### 竞技场饥饿锁定（arena-food）
 - 跑步消耗饥饿、饿到跑不动，或满饥饿自然回血，都会不公平
@@ -75,6 +84,15 @@ modules:
     enable-bomb-bar: true           # 炸弹倒计时条
     update-interval-ticks: 2        # 刷新间隔，20 tick = 1 秒
     alive-display-style: number     # number = 数字「3/5」；block = 方块串
+  bomb-defuse-sound:
+    enabled: true
+    start-sound: BLOCK_LEVER_CLICK  # 开始拆弹提示音，留空 "" 关闭
+    start-volume: 16.0              # 16 × 音量 ≈ 可听格数
+    tick-sound: BLOCK_NOTE_BLOCK_HAT # 拆弹过程中的滴答声，留空 "" 关闭
+    tick-interval-ticks: 10         # 滴答间隔，20 tick = 1 秒
+    cancel-sound: ""                # 默认留空：WBD 本体已有 cancel 音效
+    complete-sound: ""              # 默认留空：WBD 本体已有 bomb-defused 音效
+    audience: arena                 # arena = 仅该竞技场；world = 整个世界
   arena-food:
     enabled: true
     update-interval-ticks: 5        # 重置间隔

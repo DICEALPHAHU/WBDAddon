@@ -3,6 +3,7 @@ package alphahu.wbdaddon;
 import alphahu.wbdaddon.command.WBDAddonCommand;
 import alphahu.wbdaddon.module.AntiThirdCamModule;
 import alphahu.wbdaddon.module.ArenaHungerModule;
+import alphahu.wbdaddon.module.BombDefuseSoundModule;
 import alphahu.wbdaddon.module.JourneyMapModule;
 import alphahu.wbdaddon.module.KillReportsModule;
 import alphahu.wbdaddon.module.MatchStatusModule;
@@ -97,6 +98,7 @@ public final class WBDAddon extends JavaPlugin {
         this.moduleManager = new ModuleManager(this);
         moduleManager.register(new KillReportsModule(this));
         moduleManager.register(new MatchStatusModule(this));
+        moduleManager.register(new BombDefuseSoundModule(this));
         moduleManager.register(new ArenaHungerModule(this));
         moduleManager.register(new AntiThirdCamModule(this));
         moduleManager.register(new JourneyMapModule(this));
