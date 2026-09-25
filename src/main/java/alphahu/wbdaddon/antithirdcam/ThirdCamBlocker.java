@@ -79,6 +79,9 @@ public class ThirdCamBlocker implements Listener {
     /** setVisibleByDefault 是否可用；null 表示尚未探测。 */
     private Boolean visibleByDefaultSupported;
 
+    /** hideEntity 失败是否已经报过，避免每周期刷屏。 */
+    private boolean hideFailureLogged;
+
     public ThirdCamBlocker(WBDAddon plugin) {
         this.plugin = plugin;
         this.usePassenger = "passenger".equalsIgnoreCase(plugin.getConfig()
@@ -333,14 +336,32 @@ public class ThirdCamBlocker implements Listener {
      *
      * <p>{@code hideEntity} 是幂等的：已经隐藏过的实体再调一次不会有副作用，
      * 所以可以放心每个周期对所有人重来一遍，不依赖任何增量记录。
+     *
+     * <p>{@code hideEntity} 属于 Paper 扩展 API，在 Arclight 这类 Spigot 实现上
+     * 可能压根不存在，调用即抛 {@link NoSuchMethodError}。这里必须捕获并明确报出来：
+     * 否则异常会被调度器吞掉，表现成「遮挡面一直对所有人可见」而控制台毫无线索。
      */
     private void hideAllOverlaysFrom(Player observer) {
         UUID observerId = observer.getUniqueId();
         for (Map.Entry<UUID, TextDisplay> entry : overlays.entrySet()) {
             // 自己那份遮挡面要留着，别把本人也挡住
             if (entry.getKey().equals(observerId)) continue;
-            observer.hideEntity(plugin, entry.getValue());
+            try {
+                observer.hideEntity(plugin, entry.getValue());
+            } catch (Throwable t) {
+                warnHideFailureOnce(t);
+                return;
+            }
         }
+    }
+
+    /** hideEntity 不可用时只报一次，免得每个周期刷一屏。 */
+    private void warnHideFailureOnce(Throwable cause) {
+        if (hideFailureLogged) return;
+        hideFailureLogged = true;
+        plugin.getLogger().severe("hideEntity 调用失败，遮挡面无法对其他人隐藏："
+                + cause + "。本服务端很可能没有实现这个 Paper 扩展 API，"
+                + "请执行 /wbdaddon diag 查看环境诊断结果。");
     }
 
     /**

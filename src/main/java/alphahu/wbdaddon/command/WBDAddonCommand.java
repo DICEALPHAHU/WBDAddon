@@ -3,12 +3,17 @@ package alphahu.wbdaddon.command;
 import alphahu.wbdaddon.WBDAddon;
 import alphahu.wbdaddon.module.AddonModule;
 import alphahu.wbdaddon.module.BombDefuseSoundModule;
+import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
+import org.bukkit.Location;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
 import org.bukkit.command.TabCompleter;
+import org.bukkit.entity.Display;
+import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
+import org.bukkit.plugin.Plugin;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -26,6 +31,7 @@ import java.util.stream.Collectors;
  *   <li>/wbdaddon reload       重载配置文件并重启模块</li>
  *   <li>/wbdaddon modules      查看所有模块的启用状态</li>
  *   <li>/wbdaddon sound        试听拆弹提示音效</li>
+ *   <li>/wbdaddon diag         查看服务端提供了哪些扩展 API</li>
  * </ul>
  *
  * @author AlphaHu
@@ -34,7 +40,8 @@ public class WBDAddonCommand implements CommandExecutor, TabCompleter {
 
     private final WBDAddon plugin;
 
-    private static final List<String> SUB_COMMANDS = Arrays.asList("help", "reload", "modules", "sound");
+    private static final List<String> SUB_COMMANDS =
+            Arrays.asList("help", "reload", "modules", "sound", "diag");
 
     public WBDAddonCommand(WBDAddon plugin) {
         this.plugin = plugin;
@@ -83,6 +90,8 @@ public class WBDAddonCommand implements CommandExecutor, TabCompleter {
 
             case "sound" -> playSoundPreview(sender, args);
 
+            case "diag" -> sendDiagnostics(sender);
+
             default -> sender.sendMessage(color("&c未知子命令。使用 /wbdaddon help 查看帮助。"));
         }
 
@@ -95,7 +104,48 @@ public class WBDAddonCommand implements CommandExecutor, TabCompleter {
         sender.sendMessage(color("&e/wbdaddon reload &7- 重载配置并重启模块"));
         sender.sendMessage(color("&e/wbdaddon modules &7- 查看模块状态"));
         sender.sendMessage(color("&e/wbdaddon sound &7- 试听拆弹提示音效"));
+        sender.sendMessage(color("&e/wbdaddon diag &7- 查看服务端提供了哪些扩展 API"));
         sender.sendMessage(color("&6=========================="));
+    }
+
+    /**
+     * /wbdaddon diag：列出当前服务端提供了哪些扩展 API。
+     *
+     * <p>本项目按 Paper API 编译，实际却可能跑在 Arclight 这类 Spigot 实现上。
+     * 那些 Paper 扩展方法有的根本不存在、有的「签名存在但行为不完整」，
+     * 于是会出现「功能没生效，控制台也不报错」的情况。这时先用它把环境看清，
+     * 比逐个猜原因快得多。
+     */
+    private void sendDiagnostics(CommandSender sender) {
+        sender.sendMessage(color("&6====== WBDAddon 环境诊断 ======"));
+        sender.sendMessage(color("&7服务端：&f" + Bukkit.getName() + " &7" + Bukkit.getVersion()));
+
+        reportMethod(sender, "Player#hideEntity(Plugin,Entity)",
+                Player.class, "hideEntity", Plugin.class, Entity.class);
+        reportMethod(sender, "Player#showEntity(Plugin,Entity)",
+                Player.class, "showEntity", Plugin.class, Entity.class);
+        reportMethod(sender, "Entity#setVisibleByDefault(boolean)",
+                Entity.class, "setVisibleByDefault", boolean.class);
+        reportMethod(sender, "Display#setViewRange(float)",
+                Display.class, "setViewRange", float.class);
+        reportMethod(sender, "Player#teleportAsync(Location)",
+                Player.class, "teleportAsync", Location.class);
+
+        sender.sendMessage(color("&6==============================="));
+    }
+
+    /** 反射查一个公开方法在不在，只报「存在/不存在」。 */
+    private void reportMethod(CommandSender sender, String label,
+                              Class<?> owner, String name, Class<?>... params) {
+        boolean present;
+        try {
+            owner.getMethod(name, params);
+            present = true;
+        } catch (Throwable t) {
+            present = false;
+        }
+        sender.sendMessage(color("&e" + label + " &7-> "
+                + (present ? "&a存在" : "&c不存在（Paper 扩展，本服务端未实现）")));
     }
 
     /**
