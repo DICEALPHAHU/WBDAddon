@@ -6,6 +6,8 @@ WarZBombDefuse 的第三方附加组件合集 —— 击杀报告 / 单人伤害
 
 > 已在 **Arclight 1.20.1**（Forge + Bukkit 混合端）环境实测运行。
 
+> ⚠️ **自 1.0.1 起，防第三人称（`antithirdcam`）需要 [ProtocolLib](NOTICE.md)。** 没装时该模块会**自动禁用**（不会报错，也不会出现黑块），其余模块不受影响。原因见 [依赖变更告知](NOTICE.md)。
+
 ## 功能
 
 | 模块 | id | 说明 |
@@ -63,14 +65,15 @@ WarZBombDefuse 的第三方附加组件合集 —— 击杀报告 / 单人伤害
 - **Paper / Spigot / Arclight 1.20.1**
 - **WarZBombDefuse**（必装）
 - **TacZSpigotBridge**（可选，提供枪械名与更准确的击杀归属）
-- **ProtocolLib**（可选；但**防第三人称模块在 Arclight 上必须装**，否则遮挡面藏不住）
+- **ProtocolLib**（可选；但**防第三人称模块在 Arclight 上必须装**，否则该模块会自动禁用）—— 见 [依赖变更告知](NOTICE.md)
 - **JourneyMap**（仅桥接模块需要）
 
 ## 安装
 
-1. 把 `WBDAddon-1.0.1.jar` 放进服务端 `plugins`
-2. 重启服务器（或 `/reload`）
-3. 插件自动生成 `config.yml`，按需修改
+1. 把构建好的 `WBDAddon-<版本>-<git短哈希>-<构建时间戳>.jar` 放进服务端 `plugins`
+2. 需要防第三人称的话，把 `ProtocolLib-5.4.0.jar` 也放进 `plugins`（见 [依赖变更告知](NOTICE.md)）
+3. 重启服务器（或 `/reload`）
+4. 插件自动生成 `config.yml`，按需修改
 
 > 旧配置升级后建议删除或合并新配置项，让新增模块段落生效。
 
@@ -107,6 +110,7 @@ modules:
     saturation: 0                   # 饱和度清零，封死自然回血
   antithirdcam:
     enabled: true
+    require-protocol-lib: true      # 没装 ProtocolLib 就直接禁用本模块
     update-interval-ticks: 20       # 只做低频检查、丢失时重建
     follow-mode: teleport           # teleport = 每 tick 主动跟随；passenger = 骑在身上
     only-in-arena: true             # 只对竞技场参赛且存活的玩家生效
@@ -128,6 +132,7 @@ modules:
 - `/wbdaddon reload` —— 重载配置并重新启停模块
 - `/wbdaddon modules` —— 查看各模块启用状态
 - `/wbdaddon sound <音效名> [音调]` —— 试听拆弹提示音（连播三次）；不带参数列出推荐音效清单
+- `/wbdaddon diag` —— 环境诊断：列出本服务端提供了哪些 Paper 扩展 API、ProtocolLib 是否就位
 
 ## 构建
 
@@ -143,7 +148,11 @@ WBDAddon 依赖的是**闭源收费**的 WarZBombDefuse API（`pom.xml` 里是 s
 mvn clean package
 ```
 
-产物在 `target/WBDAddon-1.0.1.jar`。
+产物在 `target/WBDAddon-<版本>-<git短哈希>-<构建时间戳>.jar`，例如 `WBDAddon-1.0.1-0516647-20260925-1733.jar`。
+
+> 产物名里的短哈希来自 git-commit-id 插件，时间戳是 UTC。这样同一版本的多次构建不会互相覆盖，也能一眼对应到是哪份代码；拿不到 git 信息时（例如源码被拷出仓库）会显示 `nogit`，构建不会失败。
+>
+> ProtocolLib 在 `pom.xml` 里是 `provided`：编译期需要、不会打包进 jar，首次构建会自动下载。
 
 ## 📜 许可证
 
