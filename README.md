@@ -50,7 +50,7 @@ WarZBombDefuse 的第三方附加组件合集 —— 击杀报告 / 单人伤害
 - 只在竞技场内对**参赛且仍存活**的玩家生效；观战者、大厅玩家、以及本回合已阵亡的人都不受影响
 - **可见性由 ProtocolLib 在数据包层拦截实现**：遮挡面的生成 / 位置 / 元数据包只放行给本人，其他玩家的客户端压根收不到这个实体
 - 之所以不用 Bukkit 的 `hideEntity`：实测 Arclight 上它**方法存在、调用不报错、但完全不生效**（`setVisibleByDefault` 同理），于是遮挡面对所有人可见，看着就像「黑块挂在别人身上」
-- 没装 ProtocolLib 时模块仍会启用并退回 Bukkit API：Paper 系服务端上没问题，Arclight 上则会露馅——用 `/wbdaddon diag` 可确认当前环境
+- 没装 ProtocolLib 时**模块会自动禁用**（由 `require-protocol-lib: true` 控制），避免出现「功能没生效、黑块却挂在所有人身上」这种最糟的组合；只有在 Paper 系服务端上、并确认 `hideEntity` 确实有效时，才建议设为 `false` 退回 Bukkit API。当前环境是否满足用 `/wbdaddon diag` 查看
 - 实现方案参考开源插件 [AntiF5](https://github.com/ladakx/AntiF5)
 
 ## 致谢

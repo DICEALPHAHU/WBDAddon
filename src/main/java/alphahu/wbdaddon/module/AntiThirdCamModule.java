@@ -1,6 +1,7 @@
 package alphahu.wbdaddon.module;
 
 import alphahu.wbdaddon.WBDAddon;
+import alphahu.wbdaddon.antithirdcam.OverlayProtocolHider;
 import alphahu.wbdaddon.antithirdcam.ThirdCamBlocker;
 import org.bukkit.Bukkit;
 import org.bukkit.event.HandlerList;
@@ -43,6 +44,24 @@ public class AntiThirdCamModule implements AddonModule {
 
     @Override
     public void onEnable() {
+        // 遮挡面必须「只对本人可见」，而这件事只有两条路：ProtocolLib 的数据包拦截，
+        // 或者 Bukkit 的 hideEntity —— 后者在 Arclight 上方法存在、调用也不报错，
+        // 却完全不生效，会让遮挡面对所有人可见（就是那个「黑块挂在别人身上」）。
+        //
+        // 与其让它半死不活地跑着污染画面，不如干脆不启用：
+        // 功能没生效、副作用却实实在在，是最糟的组合。
+        if (!OverlayProtocolHider.isProtocolLibPresent()
+                && plugin.getConfig().getBoolean(
+                        "modules.antithirdcam.require-protocol-lib", true)) {
+            plugin.getLogger().warning("未检测到 ProtocolLib，防第三人称已自动禁用。"
+                    + "缺少它时遮挡面无法做到只对本人可见，会在 Arclight 这类服务端上"
+                    + "对所有人显示（「黑块挂在别人身上」）。"
+                    + "装上 ProtocolLib 后执行 /wbdaddon reload 即可恢复；"
+                    + "若你在 Paper 系服务端上且确认 Player#hideEntity 确实有效，"
+                    + "可把 modules.antithirdcam.require-protocol-lib 设为 false。");
+            return;
+        }
+
         blocker = new ThirdCamBlocker(plugin);
         // 需要监听重生与切换世界：这两件事会让遮挡面的隐藏状态失效
         Bukkit.getPluginManager().registerEvents(blocker, plugin);
@@ -63,7 +82,9 @@ public class AntiThirdCamModule implements AddonModule {
             HandlerList.unregisterAll(blocker);
             blocker.stop();
             blocker = null;
+            plugin.getLogger().info("防第三人称已卸载。");
         }
-        plugin.getLogger().info("防第三人称已卸载。");
+        // blocker 为 null 说明 onEnable 时就没启用（例如缺少 ProtocolLib），
+        // 此时不必再打一句「已卸载」误导服主
     }
 }
