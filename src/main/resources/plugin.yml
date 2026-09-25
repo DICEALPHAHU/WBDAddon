@@ -1,5 +1,7 @@
 name: WBDAddon
-version: 1.0.0
+# 版本号由 Maven 在打包时从 pom.xml 注入（resources filtering），
+# 升版本只需改 pom.xml 一处，不会出现 plugin.yml 与 pom 不同步
+version: ${project.version}
 main: alphahu.wbdaddon.WBDAddon
 api-version: '1.20'
 authors: [AlphaHu]

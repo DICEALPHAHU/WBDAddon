@@ -63,7 +63,7 @@ WarZBombDefuse 的第三方附加组件合集 —— 击杀报告 / 单人伤害
 
 ## 安装
 
-1. 把 `WBDAddon-1.0.0.jar` 放进服务端 `plugins`
+1. 把 `WBDAddon-1.0.1.jar` 放进服务端 `plugins`
 2. 重启服务器（或 `/reload`）
 3. 插件自动生成 `config.yml`，按需修改
 
@@ -134,7 +134,7 @@ WBDAddon 依赖的是**闭源收费**的 WarZBombDefuse API（`pom.xml` 里是 s
 mvn clean package
 ```
 
-产物在 `target/WBDAddon-1.0.0.jar`。
+产物在 `target/WBDAddon-1.0.1.jar`。
 
 ## 📜 许可证
 
