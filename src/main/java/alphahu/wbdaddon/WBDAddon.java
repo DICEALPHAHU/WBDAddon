@@ -15,6 +15,10 @@ import org.bukkit.plugin.RegisteredServiceProvider;
 import org.bukkit.plugin.java.JavaPlugin;
 import com.tacz.bridge.spigot.api.TacZSpigotApi;
 
+import java.io.IOException;
+import java.io.InputStream;
+import java.util.Properties;
+
 /**
  * WBDAddon 主类。
  *
@@ -60,6 +64,8 @@ public final class WBDAddon extends JavaPlugin {
                 "&b========================================"));
         Bukkit.getConsoleSender().sendMessage(ChatColor.translateAlternateColorCodes('&',
                 "&b  WBDAddon &ev" + pluginVersion()));
+        Bukkit.getConsoleSender().sendMessage(ChatColor.translateAlternateColorCodes('&',
+                "&b  构建：&e" + buildStamp()));
         Bukkit.getConsoleSender().sendMessage(ChatColor.translateAlternateColorCodes('&',
                 "&b  作者：&dAlphaHu"));
         Bukkit.getConsoleSender().sendMessage(ChatColor.translateAlternateColorCodes('&',
@@ -150,6 +156,25 @@ public final class WBDAddon extends JavaPlugin {
     @SuppressWarnings("deprecation")
     private String pluginVersion() {
         return getDescription().getVersion();
+    }
+
+    /**
+     * 读取打包时 git-commit-id 插件生成的 git.properties，
+     * 在启动横幅里标明这份构建来自哪个提交，方便确认服务端上装的到底是哪一份。
+     */
+    private String buildStamp() {
+        try (InputStream in = getResource("git.properties")) {
+            if (in == null) {
+                // 直接在 IDE 里跑 class 文件时不会有这个文件
+                return "未知（非打包产物）";
+            }
+            Properties props = new Properties();
+            props.load(in);
+            return props.getProperty("git.commit.id.abbrev", "?")
+                    + "  " + props.getProperty("git.build.time", "?");
+        } catch (IOException e) {
+            return "未知";
+        }
     }
 
     // ------------------------------------------------------------------

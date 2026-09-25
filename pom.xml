@@ -15,9 +15,13 @@
     <properties>
         <java.version>17</java.version>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <!-- 构建号用构建时间戳，产物名形如 WBDAddon-1.0.1-20260926-1745.jar，
-             避免同一版本号的多次构建产物混在一起分不清 -->
+        <!-- 构建号 = git 提交短哈希 + 构建时间戳（UTC），产物名形如
+             WBDAddon-1.0.1-a4cbeed-20260926-1745.jar：
+             哈希能一眼对应到是哪份代码，时间戳用于区分同一提交的多次构建 -->
         <maven.build.timestamp.format>yyyyMMdd-HHmm</maven.build.timestamp.format>
+        <!-- 这里刻意不定义 git.commit.id.abbrev 的默认值：
+             antrun 里的 Ant 属性是不可变的，若此处先给了值，
+             后面 loadproperties 就再也覆盖不掉，产物名会永远停在那个默认值上。 -->
     </properties>
 
     <repositories>
@@ -73,10 +77,36 @@
     <build>
         <defaultGoal>clean package</defaultGoal>
 
-        <!-- 产物文件名 = 版本号 + 构建号（构建时间戳） -->
-        <finalName>${project.artifactId}-${project.version}-${maven.build.timestamp}</finalName>
+        <!-- 基础产物名。真正的交付名由后面的 antrun 在打包完成后补上 git 哈希与构建时间戳。
+             不能直接写在这里：finalName 在项目加载阶段就被插值，那时插件还没取到 git 信息，
+             写 ${git.commit.id.abbrev} 只会拿到 pom 里的默认值 nogit。 -->
+        <finalName>${project.artifactId}-${project.version}</finalName>
 
         <plugins>
+            <!-- 取 git 提交短哈希，供产物命名与构建信息展示使用 -->
+            <plugin>
+                <groupId>io.github.git-commit-id</groupId>
+                <artifactId>git-commit-id-maven-plugin</artifactId>
+                <version>9.0.1</version>
+                <executions>
+                    <execution>
+                        <id>get-git-info</id>
+                        <phase>initialize</phase>
+                        <goals>
+                            <goal>revision</goal>
+                        </goals>
+                    </execution>
+                </executions>
+                <configuration>
+                    <!-- 同时生成 git.properties（会被打进 jar），启动日志读它显示构建来源 -->
+                    <generateGitPropertiesFile>true</generateGitPropertiesFile>
+                    <abbrevLength>7</abbrevLength>
+                    <!-- 源码被拷出仓库、拿不到 git 信息时不要让构建失败 -->
+                    <failOnNoGitDirectory>false</failOnNoGitDirectory>
+                    <failOnUnableToExtractRepoInfo>false</failOnUnableToExtractRepoInfo>
+                </configuration>
+            </plugin>
+
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
@@ -102,6 +132,35 @@
                         <goals>
                             <goal>shade</goal>
                         </goals>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <!-- 打包完成后把产物改名为「版本号- git 短哈希-构建时间戳」。
+                 必须排在 shade 之后：同一个 phase 内插件按声明顺序执行，
+                 否则会把 shade 替换前的原始 jar 改名。 -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-antrun-plugin</artifactId>
+                <version>3.1.0</version>
+                <executions>
+                    <execution>
+                        <id>stamp-artifact-name</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>run</goal>
+                        </goals>
+                        <configuration>
+                            <target>
+                                <!-- 从插件生成的 git.properties 里读哈希。
+                                     不能直接写 ${git.commit.id.abbrev}：该插件只负责写文件，
+                                     并不会把属性注入 Maven，那样只会得到字面量。 -->
+                                <loadproperties srcFile="${project.build.outputDirectory}/git.properties"/>
+                                <move file="${project.build.directory}/${project.build.finalName}.jar"
+                                      tofile="${project.build.directory}/${project.build.finalName}-${git.commit.id.abbrev}-${maven.build.timestamp}.jar"
+                                      overwrite="true"/>
+                            </target>
+                        </configuration>
                     </execution>
                 </executions>
             </plugin>
