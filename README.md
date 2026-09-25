@@ -30,7 +30,7 @@ WarZBombDefuse 的第三方附加组件合集 —— 击杀报告 / 单人伤害
 - WBD 本体**只在拆除成功与被中断时有音效，开始拆弹与整个拆弹过程是静音的**，T 阵营因此无法察觉 CT 在拆弹
 - 本模块在 C4 的位置播放一声「开始拆弹」提示音，随后按固定间隔持续播放滴答声
 - 声音以 C4 为音源，**带方位与距离衰减**——T 能听出「有人在拆、大概在哪个方向」，而不是只收到一句广播
-- 音量决定可听距离（约 16 × 音量 格，默认 16.0 ≈ 256 格，够覆盖整张图）；客户端会对音量限幅，调大只传得更远，不会把近处玩家震聋
+- 音量决定可听距离（约 16 × 音量 格，默认 2.0 ≈ 32 格，只有靠近炸弹的人才听得到）；客户端会对音量限幅，调大只传得更远，不会把近处玩家震聋
 - 听众默认只限该竞技场内玩家（含已淘汰的旁观者），与 WBD 自身 `bomb-planted` 的做法一致；也可切到 `world` 连大厅一起播
 - 中断与成功音效默认留空，因为 WBD 本体已经有了，避免重复出声
 - 音效可换：默认用 `BLOCK_NOTE_BLOCK_BIT`（8-bit 芯片音色）做电子「嘀嘀嘀」，用 `/wbdaddon sound` 可以试听并查看推荐清单
@@ -64,7 +64,7 @@ WarZBombDefuse 的第三方附加组件合集 —— 击杀报告 / 单人伤害
 
 ## 安装
 
-1. 把 `WBDAddon-1.0.2.jar` 放进服务端 `plugins`
+1. 把 `WBDAddon-1.0.1.jar` 放进服务端 `plugins`
 2. 重启服务器（或 `/reload`）
 3. 插件自动生成 `config.yml`，按需修改
 
@@ -89,7 +89,7 @@ modules:
     enabled: true
     start-sound: BLOCK_NOTE_BLOCK_BIT   # 开始拆弹：低沉一声「嘟」，留空 "" 关闭
     start-pitch: 0.7
-    start-volume: 16.0                  # 16 × 音量 ≈ 可听格数
+    start-volume: 2.0                   # 16 × 音量 ≈ 可听格数（2.0 ≈ 32 格）
     tick-sound: BLOCK_NOTE_BLOCK_BIT    # 拆弹中：电子「嘀嘀嘀」，留空 "" 关闭
     tick-pitch: 1.8
     tick-interval-ticks: 10             # 滴答间隔，20 tick = 1 秒
@@ -138,7 +138,7 @@ WBDAddon 依赖的是**闭源收费**的 WarZBombDefuse API（`pom.xml` 里是 s
 mvn clean package
 ```
 
-产物在 `target/WBDAddon-1.0.2.jar`。
+产物在 `target/WBDAddon-1.0.1.jar`。
 
 ## 📜 许可证
 
