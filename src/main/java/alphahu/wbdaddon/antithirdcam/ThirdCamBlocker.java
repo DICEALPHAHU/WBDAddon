@@ -3,6 +3,7 @@ package alphahu.wbdaddon.antithirdcam;
 import alphahu.wbdaddon.WBDAddon;
 import com.warz.bombdefuse.arena.ArenaManager;
 import com.warz.bombdefuse.arena.ArenaSession;
+import com.warz.bombdefuse.arena.PlayerRecord;
 import com.warz.bombdefuse.model.Team;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
@@ -12,6 +13,10 @@ import org.bukkit.entity.Display;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.TextDisplay;
+import org.bukkit.event.EventHandler;
+import org.bukkit.event.Listener;
+import org.bukkit.event.player.PlayerChangedWorldEvent;
+import org.bukkit.event.player.PlayerRespawnEvent;
 import org.bukkit.scheduler.BukkitTask;
 import org.bukkit.util.Transformation;
 import org.joml.Quaternionf;
@@ -43,7 +48,7 @@ import java.util.concurrent.ConcurrentHashMap;
  *
  * @author AlphaHu
  */
-public class ThirdCamBlocker {
+public class ThirdCamBlocker implements Listener {
 
     /** 标记本插件创建的遮挡面，便于清理残留。 */
     private static final String TAG = "wbdaddon_antithirdcam";
@@ -51,6 +56,19 @@ public class ThirdCamBlocker {
     private final WBDAddon plugin;
 
     private BukkitTask task;
+
+    /** 非乘客模式下的位置跟随任务（每 tick 一次）。 */
+    private BukkitTask followTask;
+
+    /**
+     * 是否用「乘客」机制跟随。
+     *
+     * <p>乘客机制让遮挡面骑在玩家身上，由服务端自动同步位置与朝向，开销最低；
+     * 但它会把玩家变成「载具」，改变玩家的实体状态。在 Arclight 这类
+     * Forge + Bukkit 混合端上，这种非常规状态有与传送、回合位置重置互相干扰的风险，
+     * 因此默认改用「每 tick 主动传送」——多几次实体包，但不碰玩家自身状态。
+     */
+    private final boolean usePassenger;
 
     /** 玩家 UUID -> 其专属遮挡面。 */
     private final Map<UUID, TextDisplay> overlays = new ConcurrentHashMap<>();
@@ -69,19 +87,27 @@ public class ThirdCamBlocker {
     private volatile long lastFullSweep = 0L;
 
     /** 全量重隐藏的兜底间隔：兜住切世界、重生后客户端实体状态错位。 */
-    private static final long FULL_SWEEP_INTERVAL_MS = 30_000L;
+    private static final long FULL_SWEEP_INTERVAL_MS = 5_000L;
 
     public ThirdCamBlocker(WBDAddon plugin) {
         this.plugin = plugin;
+        this.usePassenger = "passenger".equalsIgnoreCase(plugin.getConfig()
+                .getString("modules.antithirdcam.follow-mode", "teleport"));
     }
 
     public void start() {
         long interval = Math.max(1, plugin.getConfig()
                 .getLong("modules.antithirdcam.update-interval-ticks", 20));
-        // 遮挡面靠乘客机制自动跟随，这里只做低频的「检查并在丢失时重建」
+        // 遮挡面的位置更新方式由 follow-mode 决定，这里只做低频的「检查并在丢失时重建」
         hiddenObservers.clear();
         lastFullSweep = 0L;
         task = Bukkit.getScheduler().runTaskTimer(plugin, this::tick, 20L, interval);
+
+        // 非乘客模式必须每 tick 主动把遮挡面挪到玩家身上，否则跟不住移动
+        if (!usePassenger) {
+            followTask = Bukkit.getScheduler().runTaskTimer(plugin, this::followTick, 20L, 1L);
+        }
+
         cleanupLeftovers();
     }
 
@@ -89,6 +115,10 @@ public class ThirdCamBlocker {
         if (task != null) {
             task.cancel();
             task = null;
+        }
+        if (followTask != null) {
+            followTask.cancel();
+            followTask = null;
         }
         for (TextDisplay display : overlays.values()) {
             removeEntity(display);
@@ -125,27 +155,80 @@ public class ThirdCamBlocker {
         }
     }
 
-    /** 是否需要给该玩家挂遮挡面。 */
-    private boolean shouldBlock(ArenaManager am, Player player) {
-        if (!plugin.getConfig().getBoolean("modules.antithirdcam.only-in-arena", true)) {
-            return true;
+    /**
+     * 玩家重生后，服务端会重新向客户端发送周边实体，
+     * 之前对该玩家做的 hideEntity 会一并失效。
+     *
+     * <p>必须把它从「已隐藏」集合里摘掉，否则增量维护会认为它已经处理过而跳过，
+     * 结果就是别人身上的遮挡面对它重新可见——表现为「一个大黑方块糊脸」。
+     */
+    @EventHandler
+    public void onPlayerRespawn(PlayerRespawnEvent event) {
+        hiddenObservers.remove(event.getPlayer().getUniqueId());
+    }
+
+    /** 切换世界同理：客户端会重建实体列表，隐藏状态失效。 */
+    @EventHandler
+    public void onPlayerChangedWorld(PlayerChangedWorldEvent event) {
+        hiddenObservers.remove(event.getPlayer().getUniqueId());
+    }
+
+    /**
+     * 非乘客模式下的位置跟随：每 tick 把遮挡面挪到玩家身上。
+     *
+     * <p>位置随便设，朝向交给 {@code Billboard.CENTER}（永远面向观察者）。
+     */
+    private void followTick() {
+        for (Map.Entry<UUID, TextDisplay> entry : overlays.entrySet()) {
+            Player owner = Bukkit.getPlayer(entry.getKey());
+            if (owner == null) continue;
+
+            TextDisplay display = entry.getValue();
+            if (!display.isValid()) continue;
+
+            display.teleport(owner.getLocation());
         }
+    }
+
+    /**
+     * 是否需要给该玩家挂遮挡面。
+     *
+     * <p>只给「竞技场内仍存活」的参赛者挂：阵亡玩家转旁观后全图本来就该看得见，
+     * 再挂遮挡面只会把他自己的视野糊掉，纯属干扰。
+     */
+    private boolean shouldBlock(ArenaManager am, Player player) {
         ArenaSession session = am.getSession(player);
-        if (session == null) return false;
+        if (session == null) {
+            // 不在任何竞技场：仅当配置要求全服生效时才处理
+            return !plugin.getConfig().getBoolean("modules.antithirdcam.only-in-arena", true);
+        }
+
         Team team = session.getTeam(player);
-        return team != null && team.isPlaying();
+        if (team == null || !team.isPlaying()) return false;
+
+        // team.isPlaying() 对已阵亡的 T/CT 仍为 true，必须另外确认还活着
+        PlayerRecord record = session.getRecord(player);
+        return record != null && record.isAlive();
     }
 
     /** 确保该玩家有一个有效的遮挡面（丢了就重建）。 */
     private void ensure(Player player) {
         TextDisplay display = overlays.get(player.getUniqueId());
-        // 仍在骑乘状态说明一切正常
-        if (display != null && display.isValid() && player.getPassengers().contains(display)) {
-            // 可见性由 tick() 中的 syncHiddenObservers() 增量维护，这里不必重复隐藏
+        if (display != null && display.isValid() && isFollowing(player, display)) {
+            // 可见性由 syncHiddenObservers() 增量维护，这里不必重复隐藏
             return;
         }
         remove(player.getUniqueId());
         overlays.put(player.getUniqueId(), spawn(player));
+    }
+
+    /** 遮挡面是否仍正常跟着该玩家。 */
+    private boolean isFollowing(Player player, TextDisplay display) {
+        if (usePassenger) {
+            return player.getPassengers().contains(display);
+        }
+        // 主动传送模式下只要还在同一个世界就算正常，位置由 followTick() 负责
+        return player.getWorld().equals(display.getWorld());
     }
 
     private TextDisplay spawn(Player player) {
@@ -185,8 +268,13 @@ public class ThirdCamBlocker {
         applyViewRange(display, (float) plugin.getConfig()
                 .getDouble("modules.antithirdcam.view-range", 8.0));
 
-        // 骑在玩家身上：位置与朝向自动跟随，无需每 tick 传送
-        player.addPassenger(display);
+        // 乘客模式：骑在玩家身上，位置与朝向由服务端自动同步
+        // 非乘客模式：位置由 followTick() 每 tick 主动更新
+        if (usePassenger) {
+            player.addPassenger(display);
+        } else {
+            display.teleport(player.getLocation());
+        }
         player.showEntity(plugin, display);
 
         // 可见性：优先用 setVisibleByDefault（Paper / 部分服务端），

@@ -2,6 +2,8 @@ package alphahu.wbdaddon.module;
 
 import alphahu.wbdaddon.WBDAddon;
 import alphahu.wbdaddon.antithirdcam.ThirdCamBlocker;
+import org.bukkit.Bukkit;
+import org.bukkit.event.HandlerList;
 
 /**
  * 防第三人称偷看模块。
@@ -42,16 +44,23 @@ public class AntiThirdCamModule implements AddonModule {
     @Override
     public void onEnable() {
         blocker = new ThirdCamBlocker(plugin);
+        // 需要监听重生与切换世界：这两件事会让遮挡面的隐藏状态失效
+        Bukkit.getPluginManager().registerEvents(blocker, plugin);
         blocker.start();
 
         long interval = plugin.getConfig()
                 .getLong("modules.antithirdcam.update-interval-ticks", 20);
-        plugin.getLogger().info("防第三人称已启动，检查间隔 " + interval + " tick。");
+        String followMode = plugin.getConfig()
+                .getString("modules.antithirdcam.follow-mode", "teleport");
+        plugin.getLogger().info("防第三人称已启动，检查间隔 " + interval
+                + " tick，跟随方式 " + followMode + "。");
     }
 
     @Override
     public void onDisable() {
         if (blocker != null) {
+            // 显式注销监听器，避免 reload 时同一事件被处理多次
+            HandlerList.unregisterAll(blocker);
             blocker.stop();
             blocker = null;
         }

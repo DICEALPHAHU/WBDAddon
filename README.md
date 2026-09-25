@@ -46,8 +46,9 @@ WarZBombDefuse 的第三方附加组件合集 —— 击杀报告 / 单人伤害
 ### 防第三人称（antithirdcam）
 - 第三人称视角是纯客户端按键，服务端既禁不掉也侦测不到，所以改用「遮挡」思路
 - 给参赛玩家挂一块巨大的黑色遮挡面，且**只对该玩家本人可见**；切到第三人称时视野会被糊住，隔着掩体偷看就失去意义了
-- 遮挡面用「乘客」机制骑在玩家身上，位置与朝向自动跟随，不需要每 tick 传送
-- 只在竞技场内对参赛玩家生效，观战者与大厅玩家不受影响
+- 遮挡面默认每 tick 主动跟随玩家（`follow-mode: teleport`），也可切回开销更低的「乘客」机制（`passenger`）
+- 只在竞技场内对**参赛且仍存活**的玩家生效；观战者、大厅玩家、以及本回合已阵亡的人都不受影响
+- 玩家重生或切换世界时会重新同步遮挡面的可见性（这两件事会让服务端的隐藏状态失效）
 - 实现方案参考开源插件 [AntiF5](https://github.com/ladakx/AntiF5)
 
 ## 致谢
@@ -103,8 +104,9 @@ modules:
     saturation: 0                   # 饱和度清零，封死自然回血
   antithirdcam:
     enabled: true
-    update-interval-ticks: 20       # 只做低频检查，遮挡面自动跟随玩家
-    only-in-arena: true             # 只对竞技场参赛玩家生效
+    update-interval-ticks: 20       # 只做低频检查、丢失时重建
+    follow-mode: teleport           # teleport = 每 tick 主动跟随；passenger = 骑在身上
+    only-in-arena: true             # 只对竞技场参赛且存活的玩家生效
     overlay-text: "§0█"             # 遮挡面字形，默认黑色实心方块
     translation-y: -16.0            # 渲染平移，位置不对时调这里
     scale-x: 128.0                  # 缩放倍数：挡不住就加大，误挡就减小
