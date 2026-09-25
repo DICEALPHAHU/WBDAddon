@@ -136,16 +136,15 @@ public class ThirdCamBlocker implements Listener {
             }
         }
 
-        // 可见性：每个周期都老老实实对所有人重算一遍，不做增量记录。
+        // 可见性：每个周期对所有人重算一遍，不做增量记录。
         //
-        // 重生、切换世界、以及回合出生点那种长距离传送，都会让服务端重新发送实体，
-        // 之前的 hideEntity 会一并失效。增量方案只要漏掉其中一个场景，别人的遮挡面
-        // 就会重新可见——表现为「一个大黑方块糊脸」，而且极难排查。
-        // 代价只是每周期最多 n² 次 hideEntity（幂等操作），小规模服务器无压力。
-        if (Boolean.FALSE.equals(visibleByDefaultSupported)) {
-            for (Player observer : Bukkit.getOnlinePlayers()) {
-                hideAllOverlaysFrom(observer);
-            }
+        // 这里刻意不看 setVisibleByDefault 的探测结果：部分混合端（如 Arclight）
+        // 这个方法的签名存在、调用也不报错，但行为并不完整。一旦据此认定
+        // 「已经默认隐藏了」而跳过 hideEntity，遮挡面就会对所有人可见
+        // ——正是「黑块挂在别人身上」的成因。hideEntity 是 Spigot 级 API，
+        // 一定存在，所以无条件走它，两者叠加没有副作用。
+        for (Player observer : Bukkit.getOnlinePlayers()) {
+            hideAllOverlaysFrom(observer);
         }
     }
 
@@ -179,7 +178,6 @@ public class ThirdCamBlocker implements Listener {
      * 此刻的 hideEntity 会被随后到达的实体包盖掉，等于白做。
      */
     private void resyncLater(Player player) {
-        if (!Boolean.FALSE.equals(visibleByDefaultSupported)) return;
         Bukkit.getScheduler().runTask(plugin, () -> {
             if (player.isOnline()) {
                 hideAllOverlaysFrom(player);
@@ -291,31 +289,34 @@ public class ThirdCamBlocker implements Listener {
         }
         player.showEntity(plugin, display);
 
-        // 可见性：优先用 setVisibleByDefault（Paper / 部分服务端），
-        // 不支持则退化为「对其他玩家逐个 hideEntity」
-        if (!applyDefaultInvisibility(display)) {
-            // 新遮挡面立刻对当前所有其他在线玩家隐藏，不等下一轮重算，
-            // 否则新建的遮挡面会有一个周期的可见窗口
-            for (Player other : Bukkit.getOnlinePlayers()) {
-                if (other.equals(player)) continue;
-                other.hideEntity(plugin, display);
-            }
+        // 可见性：setVisibleByDefault（Paper 才有）只当额外的一层，
+        // 无论它是否真的生效，都对其他在线玩家 hideEntity ——
+        // 免得新建的遮挡面出现可见窗口
+        applyDefaultInvisibility(display);
+        for (Player other : Bukkit.getOnlinePlayers()) {
+            if (other.equals(player)) continue;
+            other.hideEntity(plugin, display);
         }
         return display;
     }
 
     /**
-     * 让遮挡面默认对所有玩家不可见，之后由 {@code showEntity} 单独给本人显示。
+     * 尝试让遮挡面默认对所有玩家不可见（Paper 的扩展能力）。
      *
-     * @return 是否成功（false 表示当前服务端不支持该方法）
+     * <p>返回值只用来打一行日志告知服主。真正的隐藏<b>不依赖</b>它是否生效——
+     * 「方法存在」不等于「行为正确」，混合端上完全可能两者不一致。
      */
-    private boolean applyDefaultInvisibility(TextDisplay display) {
+    private void applyDefaultInvisibility(TextDisplay display) {
         if (visibleByDefaultSupported == null) {
             visibleByDefaultSupported = invokeSetVisibleByDefault(display);
+            plugin.getLogger().info("遮挡面可见性：本服务端 "
+                    + (visibleByDefaultSupported ? "存在" : "不存在")
+                    + " setVisibleByDefault，已"
+                    + (visibleByDefaultSupported ? "叠加" : "完全依赖")
+                    + " hideEntity 隐藏。");
         } else if (visibleByDefaultSupported) {
             invokeSetVisibleByDefault(display);
         }
-        return visibleByDefaultSupported;
     }
 
     private boolean invokeSetVisibleByDefault(TextDisplay display) {
