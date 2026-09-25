@@ -1,9 +1,10 @@
 package alphahu.wbdaddon;
 
 import alphahu.wbdaddon.command.WBDAddonCommand;
+import alphahu.wbdaddon.module.AntiThirdCamModule;
+import alphahu.wbdaddon.module.ArenaHungerModule;
 import alphahu.wbdaddon.module.JourneyMapModule;
 import alphahu.wbdaddon.module.KillReportsModule;
-import alphahu.wbdaddon.module.ArenaHungerModule;
 import alphahu.wbdaddon.module.MatchStatusModule;
 import alphahu.wbdaddon.module.ModuleManager;
 import com.warz.bombdefuse.WarZBombDefusePlugin;
@@ -67,7 +68,7 @@ public final class WBDAddon extends JavaPlugin {
         Bukkit.getConsoleSender().sendMessage(ChatColor.translateAlternateColorCodes('&',
                 "&b  意见反馈QQ：&d2387629002"));
         Bukkit.getConsoleSender().sendMessage(ChatColor.translateAlternateColorCodes('&',
-                "&b  开源仓库：&egithub.com/DICEALPAHU/WBDaddon"));
+                "&b  开源仓库：&egithub.com/DICEALPHAHU/WBDAddon"));
         Bukkit.getConsoleSender().sendMessage(ChatColor.translateAlternateColorCodes('&',
                 "&b========================================"));
 
@@ -97,6 +98,7 @@ public final class WBDAddon extends JavaPlugin {
         moduleManager.register(new KillReportsModule(this));
         moduleManager.register(new MatchStatusModule(this));
         moduleManager.register(new ArenaHungerModule(this));
+        moduleManager.register(new AntiThirdCamModule(this));
         moduleManager.register(new JourneyMapModule(this));
 
         // 5. 启用所有模块

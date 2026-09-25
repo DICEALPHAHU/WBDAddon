@@ -1,6 +1,6 @@
 # WBDAddon
 
-WarZBombDefuse 的第三方附加组件合集 —— 击杀报告 / 单人伤害统计 / 比赛状态显示 / 竞技场饥饿锁定 / JourneyMap 队伍桥接。
+WarZBombDefuse 的第三方附加组件合集 —— 击杀报告 / 单人伤害统计 / 比赛状态显示 / 竞技场饥饿锁定 / 防第三人称偷看 / JourneyMap 队伍桥接。
 
 每个功能都是独立模块，通过 `config.yml` 单独开关，互不影响。无需改动 WBD 本体，纯附加。
 
@@ -14,6 +14,7 @@ WarZBombDefuse 的第三方附加组件合集 —— 击杀报告 / 单人伤害
 | 比赛状态 | `match-status` | 顶部 ActionBar 显示 T/CT 存活人数；炸弹安放后 BossBar 显示倒计时进度条 |
 | 竞技场饥饿锁定 | `arena-food` | 竞技场玩家饥饿恒定到安全值：跑速恒定、不自然回血 |
 | JourneyMap 桥接 | `journeymap-bridge` | 同步 WBD 队伍数据到原版 Team，配合 JourneyMap Teams 队友可见、敌军隐藏、观战消失 |
+| 防第三人称 | `antithirdcam` | 给参赛玩家挂一块只对本人可见的巨大遮挡面，让第三人称视角失去隔墙偷看的价值 |
 
 ### 击杀报告（kill-reports）
 - 淘汰提示显示击杀者与武器（TacZ 枪械按 GunId 人性化改名：`tacz:p320 → P320`）
@@ -31,6 +32,13 @@ WarZBombDefuse 的第三方附加组件合集 —— 击杀报告 / 单人伤害
 
 ### JourneyMap 桥接（journeymap-bridge）
 - 把 WBD 队伍数据写入原版 Scoreboard Team，配合客户端 JourneyMap Teams 实现队友可见、敌军隐藏、观战消失
+
+### 防第三人称（antithirdcam）
+- 第三人称视角是纯客户端按键，服务端既禁不掉也侦测不到，所以改用「遮挡」思路
+- 给参赛玩家挂一块巨大的黑色遮挡面，且**只对该玩家本人可见**；切到第三人称时视野会被糊住，隔着掩体偷看就失去意义了
+- 遮挡面用「乘客」机制骑在玩家身上，位置与朝向自动跟随，不需要每 tick 传送
+- 只在竞技场内对参赛玩家生效，观战者与大厅玩家不受影响
+- 实现方案参考开源插件 [AntiF5](https://github.com/ladakx/AntiF5)
 
 ## 致谢
 
@@ -58,16 +66,33 @@ WarZBombDefuse 的第三方附加组件合集 —— 击杀报告 / 单人伤害
 modules:
   kill-reports:
     enabled: true
-    show-round-summary: true        # 是否发送每人伤害统计
+    replace-default-death-message: true  # 是否替换 WBD 默认的淘汰消息
+    show-round-summary: true        # 是否给每人单独发送伤害统计
+    damage-decimal-places: 1        # 伤害数值保留几位小数
   match-status:
     enabled: true
     enable-alive-action-bar: true   # 存活人数顶部显示
     enable-bomb-bar: true           # 炸弹倒计时条
+    update-interval-ticks: 2        # 刷新间隔，20 tick = 1 秒
+    alive-display-style: number     # number = 数字「3/5」；block = 方块串
   arena-food:
     enabled: true
+    update-interval-ticks: 5        # 重置间隔
     food-level: 17                  # 恒定饥饿值（跑速恒定 + 不回血）
+    saturation: 0                   # 饱和度清零，封死自然回血
+  antithirdcam:
+    enabled: true
+    update-interval-ticks: 20       # 只做低频检查，遮挡面自动跟随玩家
+    only-in-arena: true             # 只对竞技场参赛玩家生效
+    overlay-text: "§0█"             # 遮挡面字形，默认黑色实心方块
+    translation-y: -16.0            # 渲染平移，位置不对时调这里
+    scale-x: 128.0                  # 缩放倍数：挡不住就加大，误挡就减小
+    scale-y: 128.0
+    scale-z: 128.0
   journeymap-bridge:
     enabled: true
+    sync-interval-ticks: 20         # 同步间隔
+    team-prefix: "wbd_"             # 原版队伍名前缀
 ```
 
 执行 `/wbdaddon reload` 即可生效，无需重启。

@@ -63,6 +63,21 @@ modules:
     # 占位符：%t_alive%/%t_total% T 存活/总，%ct_alive%/%ct_total% CT 存活/总
     alive-line-format: "&cT 存活 &f%t_alive%&7/&f%t_total%   &bCT 存活 &f%ct_alive%&7/&f%ct_total%"
 
+    # 存活显示样式：number = 数字（3/5）；block = 方块（每人一个方块）
+    alive-display-style: number
+
+    # ↓ 以下仅在 alive-display-style: block 时生效
+    # 默认存活/淘汰都用同一个「■」字形，靠亮色/暗色区分，
+    # 保证两者绝对等宽；想换成「填/空」样式就把 block-dead-char 改成 "□"
+    block-alive-char: "■"
+    block-dead-char: "■"
+    block-t-color: "&c"           # T 方存活（亮红）
+    block-t-dead-color: "&4"      # T 方淘汰（暗红）
+    block-ct-color: "&9"          # CT 方存活（亮蓝）
+    block-ct-dead-color: "&1"     # CT 方淘汰（暗蓝）
+    # 方块行格式；%t_blocks% / %ct_blocks% = 两队的方块串（淘汰在前、存活在后）
+    block-line-format: "&cT方 %t_blocks%  &9CT方 %ct_blocks%"
+
     # 炸弹倒计时 BossBar 的标题、颜色、样式
     # 颜色可选：PINK BLUE RED GREEN YELLOW PURPLE WHITE
     # 样式可选：SOLID SEGMENTED_6 SEGMENTED_10 SEGMENTED_12 SEGMENTED_20
@@ -88,6 +103,53 @@ modules:
 
     # 恒定的饱和度（0 封死自然回血）
     saturation: 0
+
+  # ----------------------------------------------------------
+  # 防第三人称模块
+  # 功能：有些玩家会切到第三人称视角，隔着掩体看到不该看的位置。
+  #       第三人称是客户端按键，服务端无法真正禁用或侦测，所以改用
+  #       「遮挡」思路：给参赛玩家挂一个巨大的黑色遮挡面，且只对该玩家
+  #       本人可见——切到第三人称时遮挡面会糊住视野，第三人称就失去
+  #       偷看价值了。只在竞技场内生效，观战与大厅不受影响。
+  #       实现方案参考开源插件 AntiF5 (https://github.com/ladakx/AntiF5)
+  # ----------------------------------------------------------
+  antithirdcam:
+    enabled: true
+
+    # 检查间隔（tick）。遮挡面靠「乘客」机制自动跟随玩家，
+    # 这里只负责低频检查、丢失时重建。20 = 1 秒
+    update-interval-ticks: 20
+
+    # 只对竞技场内「参赛」玩家生效（观战、大厅不受影响）
+    only-in-arena: true
+
+    # 遮挡面文字。默认「黑色实心方块」（§0 = 黑色，█ = 实心方块）
+    # 也支持 & 颜色代码，例如 &0█
+    overlay-text: "§0█"
+
+    # 渲染平移（方块）。位置不对时调这里
+    translation-x: 0.0
+    translation-y: -16.0
+    translation-z: 1.0
+
+    # 缩放倍数。第三人称挡不住 → 加大；第一人称也被挡 → 减小
+    scale-x: 128.0
+    scale-y: 128.0
+    scale-z: 128.0
+
+    # 背景色（ARGB 十六进制）。0xFF000000 = 不透明黑
+    background-argb: "0xFF000000"
+
+    # 文字不透明度 0-255
+    text-opacity: 255
+
+    # 是否穿透方块渲染 / 是否投影
+    see-through: true
+    shadowed: true
+
+    # 渲染距离上限。setViewRange 是 Paper 扩展方法，
+    # Arclight/Spigot 不支持时会自动跳过，不影响使用
+    view-range: 8.0
 
   # ----------------------------------------------------------
   # JourneyMap 桥接模块
