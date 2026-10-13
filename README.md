@@ -6,7 +6,7 @@ WarZBombDefuse 的第三方附加组件合集 —— 击杀报告 / 单人伤害
 
 > 已在 **Arclight 1.20.1**（Forge + Bukkit 混合端）环境实测运行。
 
-> 🆕 **自 1.1.0 起，本插件对外暴露 `WbdAddonApi`。** 第三方游戏模式（例如 [WBDTeamDeathmatch](https://github.com/DICEALPHAHU/WBDAddon) 团队死斗）可以实现 `AddonMode` 注册进来，从而直接复用本插件的饥饿锁定、JourneyMap 桥接等功能，并共享同一套伤害账本与枪械名解析。详见 [对外 API](#对外-api)。
+> 🆕 **自 1.2.1 起，本插件对外暴露 `WbdAddonApi`。** 第三方游戏模式（例如 [WBDTeamDeathmatch](https://github.com/DICEALPHAHU/WBDTeamDeathMatch) 团队死斗）可以实现 `AddonMode` 注册进来，从而直接复用本插件的饥饿锁定、JourneyMap 桥接等功能，并共享同一套伤害账本与枪械名解析。详见 [对外 API](#对外-api)。
 
 ## 功能
 
@@ -110,7 +110,7 @@ modules:
 
 ## 对外 API
 
-自 1.1.0 起，WBDAddon 不再只服务于 WarZBombDefuse 的爆破模式。它把「一个游戏模式」抽象成
+自 1.2.1 起，WBDAddon 不再只服务于 WarZBombDefuse 的爆破模式。它把「一个游戏模式」抽象成
 `AddonMode` 接口并发布 `WbdAddonApi` 服务，任何第三方模式都可以注册进来，
 让上面那些模块**自动**对新模式的玩家生效。
 
@@ -229,7 +229,7 @@ WBDAddon 依赖的是**闭源收费**的 WarZBombDefuse API（`pom.xml` 里是 s
 mvn clean package
 ```
 
-产物在 `target/WBDAddon-<版本>-<git短哈希>-<构建时间戳>.jar`，例如 `WBDAddon-1.1.0-0516647-20260926-1733.jar`。
+产物在 `target/WBDAddon-<版本>-<git短哈希>-<构建时间戳>.jar`，例如 `WBDAddon-1.2.1-0e65b2d-20261013-0250.jar`。
 
 > 产物名里的短哈希来自 git-commit-id 插件，时间戳是 UTC。这样同一版本的多次构建不会互相覆盖，也能一眼对应到是哪份代码；拿不到 git 信息时（例如源码被拷出仓库）会显示 `nogit`，构建不会失败。
 
