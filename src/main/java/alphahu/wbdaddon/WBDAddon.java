@@ -1,7 +1,8 @@
 package alphahu.wbdaddon;
 
+import alphahu.wbdaddon.api.WbdAddonApi;
 import alphahu.wbdaddon.command.WBDAddonCommand;
-import alphahu.wbdaddon.module.AntiThirdCamModule;
+import alphahu.wbdaddon.mode.ModeRegistry;
 import alphahu.wbdaddon.module.ArenaHungerModule;
 import alphahu.wbdaddon.module.BombDefuseSoundModule;
 import alphahu.wbdaddon.module.JourneyMapModule;
@@ -12,6 +13,7 @@ import com.warz.bombdefuse.WarZBombDefusePlugin;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.plugin.RegisteredServiceProvider;
+import org.bukkit.plugin.ServicePriority;
 import org.bukkit.plugin.java.JavaPlugin;
 import com.tacz.bridge.spigot.api.TacZSpigotApi;
 
@@ -47,6 +49,15 @@ public final class WBDAddon extends JavaPlugin {
     /** 模块管理器。 */
     private ModuleManager moduleManager;
 
+    /**
+     * 模式注册表，同时也是对外发布的 {@link WbdAddonApi} 实现。
+     *
+     * <p>它的存在让 WBDAddon 的各模块不再直接认识 WarZBombDefuse 的 ArenaSession：
+     * 内置爆破模式与第三方模式（如团队死斗）都以 AddonMode 的形式注册进来，
+     * 模块只问「这个玩家参赛了吗、还活着吗、属于哪一队」。
+     */
+    private ModeRegistry modeRegistry;
+
     /** TacZSpigotBridge API，TacZ 不可用时为 null。 */
     private TacZSpigotApi tacZApi;
 
@@ -70,6 +81,8 @@ public final class WBDAddon extends JavaPlugin {
                 "&b  作者：&dAlphaHu"));
         Bukkit.getConsoleSender().sendMessage(ChatColor.translateAlternateColorCodes('&',
                 "&b  对接 WarZBombDefuse，整合击杀报告与 JourneyMap 桥接"));
+        Bukkit.getConsoleSender().sendMessage(ChatColor.translateAlternateColorCodes('&',
+                "&b  暴露 WbdAddonApi，其他模式可实现 AddonMode 复用本插件功能"));
         Bukkit.getConsoleSender().sendMessage(ChatColor.translateAlternateColorCodes('&',
                 "&b  未来或许会有更好的模块，可以在仓库中提交Pull Request"));
         Bukkit.getConsoleSender().sendMessage(ChatColor.translateAlternateColorCodes('&',
@@ -106,13 +119,21 @@ public final class WBDAddon extends JavaPlugin {
         moduleManager.register(new MatchStatusModule(this));
         moduleManager.register(new BombDefuseSoundModule(this));
         moduleManager.register(new ArenaHungerModule(this));
-        moduleManager.register(new AntiThirdCamModule(this));
         moduleManager.register(new JourneyMapModule(this));
 
         // 5. 启用所有模块
         moduleManager.enableAll();
 
-        // 6. 注册命令
+        // 6. 建立模式注册表并对其他插件发布 API
+        //    放在模块启用之后：API 的 getCombatStats() 要能取到 kill-reports 模块的 DamageTracker，
+        //    模块还没启用时那个 getter 只会返回 null。
+        //    顺序上，内置的爆破模式必须最先注册，玩家归属判定是先到先得。
+        this.modeRegistry = new ModeRegistry(this);
+        modeRegistry.registerBuiltIn();
+        Bukkit.getServicesManager().register(
+                WbdAddonApi.class, modeRegistry, this, ServicePriority.Normal);
+
+        // 7. 注册命令
         WBDAddonCommand command = new WBDAddonCommand(this);
         var cmd = getCommand("wbdaddon");
         if (cmd != null) {
@@ -120,16 +141,28 @@ public final class WBDAddon extends JavaPlugin {
             cmd.setTabCompleter(command);
         }
 
-        getLogger().info("WBDAddon 已加载，共启用 " + moduleManager.getEnabledModules().size() + " 个模块。");
+        getLogger().info("WBDAddon 已加载，共启用 " + moduleManager.getEnabledModules().size() + " 个模块，"
+                + "已注册 " + modeRegistry.getModes().size() + " 个游戏模式。");
+        getLogger().info("已发布 WbdAddonApi v" + modeRegistry.getApiVersion()
+                + "，第三方模式可实现 AddonMode 接入本插件的附加功能。");
     }
 
     @Override
     public void onDisable() {
-        // 先禁用所有模块（取消任务、清理队伍、注销监听器）
+        // 先把服务从 ServicesManager 撤下，这样第三方模式不会再拿到它；
+        // 但**不在这时把字段置 null** —— 本插件自己的模块此刻还没停，
+        // 它们可能还在跑最后一个 tick 并通过 getApi() 查询玩家归属，
+        // 置 null 会让那些调用直接 NPE。撤下服务已经足以阻止外部继续使用。
+        if (modeRegistry != null) {
+            Bukkit.getServicesManager().unregister(WbdAddonApi.class, modeRegistry);
+        }
+
+        // 再禁用所有模块（取消任务、清理队伍、注销监听器）
         if (moduleManager != null) {
             moduleManager.disableAll();
         }
 
+        modeRegistry = null;
         getLogger().info("WBDAddon 已卸载。");
     }
 
@@ -140,6 +173,10 @@ public final class WBDAddon extends JavaPlugin {
     /**
      * 重载配置并重新启停所有模块。
      * 由 /wbdaddon reload 命令调用。
+     *
+     * <p>只重启模块，不动模式注册表：第三方模式注册进来的 {@code AddonMode}
+     * 属于别的插件，本插件既没有权限也没有理由在重载时把它们清掉。
+     * 如果模式插件自己想跟着重载，它会自己调用 {@code registerMode} 覆盖旧实现。
      */
     public void reload() {
         reloadConfig();
@@ -222,6 +259,18 @@ public final class WBDAddon extends JavaPlugin {
 
     public ModuleManager getModuleManager() {
         return moduleManager;
+    }
+
+    /**
+     * 获取模式注册表（以对外接口 {@link WbdAddonApi} 的形式）。
+     *
+     * <p>本插件内部模块用它做模式无关的判定。
+     *
+     * <p>第三方插件请不要拿这个引用，而是通过 Bukkit 的 ServicesManager 取
+     * {@link WbdAddonApi} —— 那样才不必把自己的类加载器钉死在 WBDAddon 上。
+     */
+    public WbdAddonApi getApi() {
+        return modeRegistry;
     }
 
     public boolean isTacZAvailable() {

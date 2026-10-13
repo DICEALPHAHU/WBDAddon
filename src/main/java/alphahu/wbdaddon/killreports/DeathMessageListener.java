@@ -1,6 +1,7 @@
 package alphahu.wbdaddon.killreports;
 
 import alphahu.wbdaddon.WBDAddon;
+import alphahu.wbdaddon.util.WeaponNames;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.entity.Player;
@@ -8,9 +9,6 @@ import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import com.warz.bombdefuse.api.WbdPlayerEliminatedEvent;
-
-import java.util.Arrays;
-import java.util.stream.Collectors;
 
 /**
  * 死亡消息监听器。
@@ -43,7 +41,8 @@ public class DeathMessageListener implements Listener {
 
         String message;
         if (killer != null) {
-            String weapon = resolveWeaponName(killer);
+            // 武器名解析已提到 WeaponNames 工具类，与 WbdAddonApi#resolveWeaponName 共用同一份实现
+            String weapon = WeaponNames.resolve(killer, plugin.getTacZApi(), plugin.isTacZAvailable());
             message = plugin.getConfig()
                     .getString("modules.kill-reports.death-message-with-killer",
                             "&c%killer% &7使用 &e%weapon% &7淘汰了 &c%victim%")
@@ -71,50 +70,12 @@ public class DeathMessageListener implements Listener {
     }
 
     /**
-     * 获取击杀者手持物品名称。
+     * 武器名解析已迁到 {@link WeaponNames}：第三方模式接入后同样需要这段逻辑，
+     * 留在监听器的私有方法里就没法复用了（见 WbdAddonApi#resolveWeaponName）。
      *
-     * <p>注意 Paper 的已知问题：切换槽位后立刻攻击，
-     * 获取到的可能仍是新槽位的物品。这是 Paper 事件本身的问题，
-     * 无法在插件层面完全修复。
+     * <p>顺带记一笔 Paper 的已知问题：切换槽位后立刻攻击，
+     * 读到的可能仍是新槽位的物品。这是事件本身的时序问题，插件层面修不掉。
      */
-    private String resolveWeaponName(Player killer) {
-        var item = killer.getInventory().getItemInMainHand();
-        if (item.getType().isAir()) {
-            return "拳头";
-        }
-
-        // TacZ 可用时，优先取枪的真实 GunId 并人性化显示（tacz:p320 → P320）。
-        // 显示名只存在于客户端资源包，服务端 bridge 只给 GunId，故按 GunId 转大写。
-        if (plugin.isTacZAvailable()) {
-            var gunId = plugin.getTacZApi().getItemGunId(item).orElse(null);
-            if (gunId != null) {
-                return humanizeGunId(gunId);
-            }
-        }
-
-        // 非 TacZ 物品：优先自定义显示名，其次 lore 首行，最后回退类型名；
-        // stripColor 去掉颜色码，避免出现 &a 之类乱码。
-        if (item.hasItemMeta()) {
-            var meta = item.getItemMeta();
-            if (meta.hasDisplayName()) {
-                return ChatColor.stripColor(meta.getDisplayName());
-            }
-            if (meta.hasLore() && !meta.getLore().isEmpty()) {
-                return ChatColor.stripColor(meta.getLore().get(0));
-            }
-        }
-        return item.getType().name().toLowerCase().replace("_", " ");
-    }
-
-    /** tacz:p320 → P320；tacz:ar_15 → AR 15；tacz:twx_r201 → TWX R201 */
-    private String humanizeGunId(String gunId) {
-        String id = gunId.contains(":") ? gunId.substring(gunId.indexOf(':') + 1) : gunId;
-        return Arrays.stream(id.split("_"))
-                .filter(s -> !s.isEmpty())
-                .map(s -> s.toUpperCase())
-                .collect(Collectors.joining(" "));
-    }
-
     private String color(String s) {
         return ChatColor.translateAlternateColorCodes('&', s);
     }

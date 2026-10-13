@@ -1,7 +1,6 @@
 package alphahu.wbdaddon.module;
 
 import alphahu.wbdaddon.WBDAddon;
-import com.warz.bombdefuse.arena.ArenaManager;
 import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
 import org.bukkit.scheduler.BukkitTask;
@@ -14,6 +13,9 @@ import org.bukkit.scheduler.BukkitTask;
  * 因此把竞技场玩家饥饿恒定到 17（跑速恒定、不自然回血），并清空饱和度为封死回血条件。
  *
  * <p>只作用于竞技场内玩家，不碰全局、不影响大厅和其他地图。
+ *
+ * <p>「在竞技场里」的判定走 {@code WbdAddonApi} 的模式注册表，因此
+ * 团队死斗这类第三方模式注册后，它的玩家同样会被锁饥饿。
  *
  * @author AlphaHu
  */
@@ -61,15 +63,15 @@ public class ArenaHungerModule implements AddonModule {
 
     /** 把竞技场内玩家的饥饿/饱和度重置到安全值。 */
     private void lockFood() {
-        ArenaManager am = plugin.getWbd().getArenaManager();
-        if (am == null) return;
+        var api = plugin.getApi();
+        if (api == null) return;
 
         int food = plugin.getConfig().getInt("modules.arena-food.food-level", 17);
         float sat = (float) plugin.getConfig().getDouble("modules.arena-food.saturation", 0.0);
 
         for (Player player : Bukkit.getOnlinePlayers()) {
-            // 只处理竞技场内的玩家；getSession 为 null 表示不在任何竞技场
-            if (am.getSession(player) != null) {
+            // 只处理处于任一已注册模式中的玩家；不属于任何模式就不碰
+            if (api.isInAnyMode(player)) {
                 player.setFoodLevel(food);
                 player.setSaturation(sat);
             }

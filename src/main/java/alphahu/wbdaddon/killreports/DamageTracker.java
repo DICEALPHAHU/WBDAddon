@@ -1,5 +1,6 @@
 package alphahu.wbdaddon.killreports;
 
+import alphahu.wbdaddon.api.CombatStats;
 import org.bukkit.entity.Player;
 
 import java.util.ArrayList;
@@ -17,9 +18,13 @@ import java.util.concurrent.ConcurrentHashMap;
  *
  * <p>每回合开始时清空，回合结束时读取并广播。
  *
+ * <p>它同时是 {@link CombatStats} 的实现：第三方模式（如团队死斗）可以
+ * 通过 {@code WbdAddonApi#getCombatStats()} 拿到同一个实例，
+ * 复用这份伤害账本来校正 TacZ 环境下的击杀归属。
+ *
  * @author AlphaHu
  */
-public class DamageTracker {
+public class DamageTracker implements CombatStats {
 
     /** 受害者 UUID -> (攻击者 UUID -> 累计伤害) */
     private final Map<UUID, Map<UUID, Double>> roundDamage = new ConcurrentHashMap<>();
@@ -32,6 +37,7 @@ public class DamageTracker {
      * @param victim   受害者
      * @param damage   本次伤害量
      */
+    @Override
     public void recordDamage(Player attacker, Player victim, double damage) {
         if (attacker == null || victim == null || damage <= 0) return;
 
@@ -46,6 +52,7 @@ public class DamageTracker {
      * @param victimUuid 受害者 UUID
      * @return 攻击者 UUID 与累计伤害的列表，无记录时返回空列表
      */
+    @Override
     public List<Map.Entry<UUID, Double>> getDamageSources(UUID victimUuid) {
         Map<UUID, Double> sources = roundDamage.get(victimUuid);
         if (sources == null || sources.isEmpty()) {
@@ -71,6 +78,7 @@ public class DamageTracker {
     }
 
     /** 清空本回合数据。新回合开始时调用。 */
+    @Override
     public void reset() {
         roundDamage.clear();
     }

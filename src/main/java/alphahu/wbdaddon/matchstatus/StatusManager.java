@@ -1,6 +1,7 @@
 package alphahu.wbdaddon.matchstatus;
 
 import alphahu.wbdaddon.WBDAddon;
+import alphahu.wbdaddon.api.AddonMode;
 import com.warz.bombdefuse.arena.ArenaManager;
 import com.warz.bombdefuse.arena.ArenaSession;
 import com.warz.bombdefuse.arena.BombState;
@@ -82,6 +83,20 @@ public class StatusManager {
         Set<ArenaSession> plantedSessions = new HashSet<>();
 
         for (Player player : Bukkit.getOnlinePlayers()) {
+            // 第三方模式（如团队死斗）可以自带顶部状态行；它不需要炸弹条，
+            // 所以这里先把它处理掉，避免和内置的存活人数抢占同一行 ActionBar
+            AddonMode mode = plugin.getApi() == null ? null : plugin.getApi().getModeFor(player);
+            if (mode != null) {
+                String custom = mode.hudLine(player);
+                if (custom != null) {
+                    if (aliveBar) {
+                        ActionBars.send(player, color(custom));
+                    }
+                    hideBomb(player);
+                    continue;
+                }
+            }
+
             ArenaSession session = am.getSession(player);
             if (session == null) {
                 hideBomb(player);

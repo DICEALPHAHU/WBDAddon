@@ -1,7 +1,7 @@
 package alphahu.wbdaddon.killreports;
 
 import alphahu.wbdaddon.WBDAddon;
-import com.warz.bombdefuse.arena.ArenaSession;
+import alphahu.wbdaddon.api.AddonMode;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
@@ -9,13 +9,17 @@ import org.bukkit.event.Listener;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
 
 /**
- * TacZ 伤害监听器。
+ * 伤害记录监听器。
  *
- * <p>当 TacZSpigotBridge 不可用时，回退到原版 EntityDamageByEntityEvent
- * 来记录伤害。当 TacZ 可用时，本监听器不注册，由桥接事件负责记录。
+ * <p>用原版 EntityDamageByEntityEvent 记录「谁对谁打了多少」，
+ * 供 TacZ 环境下的击杀归属校正与伤害总览使用。
+ * （桥接事件 TacZEntityHurtBridgeEvent 在 Arclight 上不派发，实测不可用，故不采用。）
  *
- * <p>只记录同一竞技场内、攻击者存活时的伤害；受害者不要求存活，
- * 以便把致命一击的伤害也计入（致死时 WBD 可能已先把受害者标记为死亡）。
+ * <p>只记录同一模式、同一场地内、攻击者存活时的伤害；受害者不要求存活，
+ * 以便把致命一击的伤害也计入。
+ *
+ * <p>判定走 {@link AddonMode} 而非 WBD 的 ArenaSession，
+ * 因此团队死斗这类第三方模式的伤害同样会被记录。
  *
  * @author AlphaHu
  */
@@ -44,30 +48,38 @@ public class TacZDamageListener implements Listener {
 
         if (attacker == null || attacker.equals(victim)) return;
 
-        // 只记录双方都在同一竞技场且都存活时的伤害
-        if (!isInSameArena(attacker, victim)) return;
+        if (!isRecordable(attacker, victim)) return;
 
         damageTracker.recordDamage(attacker, victim, event.getDamage());
     }
 
     /**
-     * 判断攻击者和受害者是否在同一竞技场、且双方都存活。
-     * 通过 WarZBombDefuse 的 ArenaSession 判断。
+     * 判断这次伤害是否值得记录。
+     *
+     * <p>要求双方属于同一个已注册模式、且处在同一场地，攻击者还活着。
+     *
+     * <p>只要求攻击者存活、不检查受害者：致死那一击触发时，
+     * 模式可能已经先把受害者标记为死亡，若还要求 victim 存活就会漏掉致命一击的伤害。
      */
-    private boolean isInSameArena(Player attacker, Player victim) {
-        var arenaManager = plugin.getWbd().getArenaManager();
-
-        ArenaSession attackerSession = arenaManager.getSession(attacker);
-        ArenaSession victimSession = arenaManager.getSession(victim);
-
-        // 双方必须在同一个竞技场
-        if (attackerSession == null || attackerSession != victimSession) {
+    private boolean isRecordable(Player attacker, Player victim) {
+        // 插件卸载流程里服务可能已被撤下，而本监听器还没注销完；
+        // 这时若直接解引用就会把一个 NPE 抛进事件总线
+        if (plugin.getApi() == null) {
             return false;
         }
 
-        // 只要求攻击者存活；受害者不检查 alive——
-        // 因为致死那一击触发时，WBD 可能已先把受害者标记为死亡，
-        // 若还要求 victim alive，就会漏掉致命一击的伤害。
-        return attackerSession.getRecord(attacker).isAlive();
+        AddonMode mode = plugin.getApi().getModeFor(attacker);
+        if (mode == null || mode != plugin.getApi().getModeFor(victim)) {
+            return false;
+        }
+
+        // 同一模式内还要限定同一场地：不同竞技场之间隔着世界或距离，
+        // 本该打不到彼此，但判定松一点就会把无关数据记进同一份账本
+        String arena = mode.getArenaId(attacker);
+        if (arena == null || !arena.equals(mode.getArenaId(victim))) {
+            return false;
+        }
+
+        return mode.isAlive(attacker);
     }
 }

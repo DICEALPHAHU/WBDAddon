@@ -1,20 +1,16 @@
 package alphahu.wbdaddon.command;
 
 import alphahu.wbdaddon.WBDAddon;
-import alphahu.wbdaddon.antithirdcam.OverlayProtocolHider;
+import alphahu.wbdaddon.api.AddonMode;
 import alphahu.wbdaddon.module.AddonModule;
 import alphahu.wbdaddon.module.BombDefuseSoundModule;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
-import org.bukkit.Location;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
 import org.bukkit.command.TabCompleter;
-import org.bukkit.entity.Display;
-import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
-import org.bukkit.plugin.Plugin;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -31,8 +27,8 @@ import java.util.stream.Collectors;
  *   <li>/wbdaddon help         查看帮助</li>
  *   <li>/wbdaddon reload       重载配置文件并重启模块</li>
  *   <li>/wbdaddon modules      查看所有模块的启用状态</li>
+ *   <li>/wbdaddon modes        查看已接入的游戏模式（含第三方注册进来的）</li>
  *   <li>/wbdaddon sound        试听拆弹提示音效</li>
- *   <li>/wbdaddon diag         查看服务端提供了哪些扩展 API</li>
  * </ul>
  *
  * @author AlphaHu
@@ -42,7 +38,7 @@ public class WBDAddonCommand implements CommandExecutor, TabCompleter {
     private final WBDAddon plugin;
 
     private static final List<String> SUB_COMMANDS =
-            Arrays.asList("help", "reload", "modules", "sound", "diag");
+            Arrays.asList("help", "reload", "modules", "modes", "sound");
 
     public WBDAddonCommand(WBDAddon plugin) {
         this.plugin = plugin;
@@ -89,9 +85,9 @@ public class WBDAddonCommand implements CommandExecutor, TabCompleter {
                 sender.sendMessage(color("&6==============================="));
             }
 
-            case "sound" -> playSoundPreview(sender, args);
+            case "modes" -> sendModes(sender);
 
-            case "diag" -> sendDiagnostics(sender);
+            case "sound" -> playSoundPreview(sender, args);
 
             default -> sender.sendMessage(color("&c未知子命令。使用 /wbdaddon help 查看帮助。"));
         }
@@ -104,54 +100,52 @@ public class WBDAddonCommand implements CommandExecutor, TabCompleter {
         sender.sendMessage(color("&e/wbdaddon help &7- 查看帮助"));
         sender.sendMessage(color("&e/wbdaddon reload &7- 重载配置并重启模块"));
         sender.sendMessage(color("&e/wbdaddon modules &7- 查看模块状态"));
+        sender.sendMessage(color("&e/wbdaddon modes &7- 查看已接入的游戏模式"));
         sender.sendMessage(color("&e/wbdaddon sound &7- 试听拆弹提示音效"));
-        sender.sendMessage(color("&e/wbdaddon diag &7- 查看服务端提供了哪些扩展 API"));
         sender.sendMessage(color("&6=========================="));
     }
 
     /**
-     * /wbdaddon diag：列出当前服务端提供了哪些扩展 API。
+     * /wbdaddon modes：列出已注册的游戏模式与各自的在线参赛人数。
      *
-     * <p>本项目按 Paper API 编译，实际却可能跑在 Arclight 这类 Spigot 实现上。
-     * 那些 Paper 扩展方法有的根本不存在、有的「签名存在但行为不完整」，
-     * 于是会出现「功能没生效，控制台也不报错」的情况。这时先用它把环境看清，
-     * 比逐个猜原因快得多。
+     * <p>排查「第三方模式接进来但附加功能没生效」时，先看这里：
+     * 模式没出现，说明对方没注册成功（多半是加载顺序问题，或没在
+     * onEnable 里取 WbdAddonApi）；模式在、人数为 0，说明判定方法写错了。
      */
-    private void sendDiagnostics(CommandSender sender) {
-        sender.sendMessage(color("&6====== WBDAddon 环境诊断 ======"));
-        sender.sendMessage(color("&7服务端：&f" + Bukkit.getName() + " &7" + Bukkit.getVersion()));
+    private void sendModes(CommandSender sender) {
+        sender.sendMessage(color("&6====== WBDAddon 已接入模式 ======"));
 
-        reportMethod(sender, "Player#hideEntity(Plugin,Entity)",
-                Player.class, "hideEntity", Plugin.class, Entity.class);
-        reportMethod(sender, "Player#showEntity(Plugin,Entity)",
-                Player.class, "showEntity", Plugin.class, Entity.class);
-        reportMethod(sender, "Entity#setVisibleByDefault(boolean)",
-                Entity.class, "setVisibleByDefault", boolean.class);
-        reportMethod(sender, "Display#setViewRange(float)",
-                Display.class, "setViewRange", float.class);
-        reportMethod(sender, "Player#teleportAsync(Location)",
-                Player.class, "teleportAsync", Location.class);
-
-        boolean protocolLib = OverlayProtocolHider.isProtocolLibPresent();
-        sender.sendMessage(color("&eProtocolLib 插件 &7-> "
-                + (protocolLib ? "&a已安装（防第三人称走协议层隐藏）"
-                               : "&c未安装（防第三人称无法做到只对本人可见）")));
-
-        sender.sendMessage(color("&6==============================="));
-    }
-
-    /** 反射查一个公开方法在不在，只报「存在/不存在」。 */
-    private void reportMethod(CommandSender sender, String label,
-                              Class<?> owner, String name, Class<?>... params) {
-        boolean present;
-        try {
-            owner.getMethod(name, params);
-            present = true;
-        } catch (Throwable t) {
-            present = false;
+        var api = plugin.getApi();
+        if (api == null) {
+            sender.sendMessage(color("&c模式注册表尚未初始化。"));
+            return;
         }
-        sender.sendMessage(color("&e" + label + " &7-> "
-                + (present ? "&a存在" : "&c不存在（Paper 扩展，本服务端未实现）")));
+
+        sender.sendMessage(color("&7WbdAddonApi 版本：&f" + api.getApiVersion()));
+        for (AddonMode mode : api.getModes()) {
+            String id;
+            String name;
+            int online;
+            try {
+                id = mode.getModeId();
+                name = mode.getDisplayName();
+                online = 0;
+                for (Player player : Bukkit.getOnlinePlayers()) {
+                    if (mode.isParticipating(player)) {
+                        online++;
+                    }
+                }
+            } catch (Throwable t) {
+                // 第三方实现可能抛任何异常，这里不能让一条坏数据把整张表打断
+                sender.sendMessage(color("&e" + mode.getClass().getName()
+                        + " &c查询失败：&7" + t));
+                continue;
+            }
+            sender.sendMessage(color("&e" + id + " &7(" + name + ") &f在线 " + online + " 人"));
+        }
+
+        sender.sendMessage(color("&7第三方模式实现 AddonMode 并注册 WbdAddonApi 即可接入"));
+        sender.sendMessage(color("&6================================="));
     }
 
     /**
