@@ -16,6 +16,9 @@ WarZBombDefuse 的第三方附加组件合集 —— 击杀报告 / 单人伤害
 | 比赛状态 | `match-status` | 顶部 ActionBar 显示 T/CT 存活人数；炸弹安放后 BossBar 显示倒计时进度条 |
 | 拆弹声音提示 | `bomb-defuse-sound` | CT 开始拆弹时在 C4 位置向全图播放可定位的提示音与滴答声，让 T 能回防博弈 |
 | 竞技场饥饿锁定 | `arena-food` | 竞技场玩家饥饿恒定到安全值：跑速恒定、不自然回血 |
+| 阵亡掉落 | `arena-drops` | WBD 取消致死伤害、不走原版死亡，本模块补上枪械掉落；炸弹携带者阵亡时 C4 落地（实验性，仅 T 可拾取） |
+| 队伍护甲 | `team-armor` | T / CT 穿固定颜色的染色皮革甲，护甲值已抵消为 0，只做视觉区分 |
+| 回合事件 | `round-events` | 回合结束清理竞技场掉落物；回合开始时提示「上半场最终局」与「赛点」 |
 | JourneyMap 桥接 | `journeymap-bridge` | 同步 WBD 队伍数据到原版 Team，配合 JourneyMap Teams 队友可见、敌军隐藏、观战消失 |
 | 模式接入 API | — | 通过 `WbdAddonApi` 让第三方模式复用上面这些能力，不必各写一份 |
 
@@ -100,6 +103,28 @@ modules:
     update-interval-ticks: 5        # 重置间隔
     food-level: 17                  # 恒定饥饿值（跑速恒定 + 不回血）
     saturation: 0                   # 饱和度清零，封死自然回血
+  arena-drops:
+    enabled: true
+    drop-guns: true                 # 阵亡时掉枪
+    drop-mode: held                 # held = 只掉正在用的那把；all = 背包里的枪全掉
+    drop-c4: true                   # 炸弹携带者阵亡时 C4 落地
+    allow-c4-drop: true             # 放开 WBD 对「手动丢 C4」的限制
+    c4-self-pickup-block-ms: 5000   # 丢出后 5 秒内禁止丢包者自己捡回
+    c4-display-name: "&cC4 炸弹"    # 地上 C4 的常显名牌
+    debug: false
+  team-armor:
+    enabled: true
+    update-interval-ticks: 20       # 补穿检查间隔
+    t-color: RED                    # T 方染色
+    ct-color: BLUE                  # CT 方染色
+    zero-protection: true           # 抵消皮革甲自带的 7 点护甲
+  round-events:
+    enabled: true
+    clear-drops-on-round-start: true # 新回合开始时清理上一回合的掉落物
+    half-final-enabled: true
+    half-final-title: "&6&l上半场最终局"
+    match-point-enabled: true
+    match-point-title: "&c&l赛 点"
   journeymap-bridge:
     enabled: true
     sync-interval-ticks: 20         # 同步间隔

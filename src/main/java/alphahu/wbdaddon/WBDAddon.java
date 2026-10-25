@@ -3,12 +3,15 @@ package alphahu.wbdaddon;
 import alphahu.wbdaddon.api.WbdAddonApi;
 import alphahu.wbdaddon.command.WBDAddonCommand;
 import alphahu.wbdaddon.mode.ModeRegistry;
+import alphahu.wbdaddon.module.ArenaDropsModule;
 import alphahu.wbdaddon.module.ArenaHungerModule;
 import alphahu.wbdaddon.module.BombDefuseSoundModule;
 import alphahu.wbdaddon.module.JourneyMapModule;
 import alphahu.wbdaddon.module.KillReportsModule;
 import alphahu.wbdaddon.module.MatchStatusModule;
 import alphahu.wbdaddon.module.ModuleManager;
+import alphahu.wbdaddon.module.RoundEventsModule;
+import alphahu.wbdaddon.module.TeamArmorModule;
 import com.warz.bombdefuse.WarZBombDefusePlugin;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
@@ -119,6 +122,9 @@ public final class WBDAddon extends JavaPlugin {
         moduleManager.register(new MatchStatusModule(this));
         moduleManager.register(new BombDefuseSoundModule(this));
         moduleManager.register(new ArenaHungerModule(this));
+        moduleManager.register(new ArenaDropsModule(this));
+        moduleManager.register(new TeamArmorModule(this));
+        moduleManager.register(new RoundEventsModule(this));
         moduleManager.register(new JourneyMapModule(this));
 
         // 5. 启用所有模块
