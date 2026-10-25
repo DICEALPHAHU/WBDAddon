@@ -123,13 +123,16 @@ public class TeamSynchronizer {
         }
 
         if (mode.hideEnemyNameTags()) {
-            // FOR_OWN_TEAM：名牌只对自己这一方可见。
+            // FOR_OTHER_TEAMS：名牌「对其他队伍不可见」，也就是只有自己方看得见。
             // 于是玩家看队友一目了然，看敌人却连名字都没有 —— 这正是
             // 「隐藏敌人」的实现，而且完全走原版机制，不需要发包插件。
             //
-            // 枚举名是 FOR_OWN_TEAM 而不是直觉上的 HIDE_FOR_OTHER_TEAMS：
-            // 后者的语义是「只对其他队伍可见」，正好是反的。
-            team.setOption(Team.Option.NAME_TAG_VISIBILITY, Team.OptionStatus.FOR_OWN_TEAM);
+            // ⚠ 这里踩过一个大坑：原先写的是 FOR_OWN_TEAM，注释还论证过它才对，
+            //   实际语义正好相反 —— 它是「只对自己队伍生效」，也就是**对队友隐藏**，
+            //   敌人反而看得见。表现就是「敌人头顶的名字照样穿墙可见」。
+            //   枚举顺序与 NMS 一致：ALWAYS / NEVER / FOR_OTHER_TEAMS(=hideForOtherTeams)
+            //   / FOR_OWN_TEAM(=hideForOwnTeam)。
+            team.setOption(Team.Option.NAME_TAG_VISIBILITY, Team.OptionStatus.FOR_OTHER_TEAMS);
         }
     }
 
