@@ -17,7 +17,7 @@ WarZBombDefuse 的第三方附加组件合集 —— 击杀报告 / 单人伤害
 | 拆弹声音提示 | `bomb-defuse-sound` | CT 开始拆弹时在 C4 位置向全图播放可定位的提示音与滴答声，让 T 能回防博弈 |
 | 竞技场饥饿锁定 | `arena-food` | 竞技场玩家饥饿恒定到安全值：跑速恒定、不自然回血 |
 | 阵亡掉落 | `arena-drops` | WBD 取消致死伤害、不走原版死亡，本模块补上枪械掉落；炸弹携带者阵亡时 C4 落地（实验性，仅 T 可拾取） |
-| 队伍护甲 | `team-armor` | T / CT 穿固定颜色的染色皮革甲，护甲值已抵消为 0，只做视觉区分 |
+| 队伍护甲 | `team-armor` | T / CT 穿固定颜色的染色皮革甲，护甲值已抵消为 0；默认只填空槽，不顶掉玩家自己的护甲 |
 | 回合事件 | `round-events` | 回合结束清理竞技场掉落物；回合开始时提示「上半场最终局」与「赛点」 |
 | 药水效果清理 | `arena-effects` | 进场与每回合开始时清空药水效果，防止带抗性/速度/力量进场 |
 | JourneyMap 桥接 | `journeymap-bridge` | 同步 WBD 队伍数据到原版 Team，配合 JourneyMap Teams 队友可见、敌军隐藏、观战消失 |
@@ -125,13 +125,14 @@ modules:
     t-color: RED                    # T 方染色
     ct-color: BLUE                  # CT 方染色
     zero-protection: true           # 抵消皮革甲自带的 7 点护甲
+    overwrite-existing: false       # false=只填空槽，不顶掉玩家自己的护甲
   round-events:
     enabled: true
     clear-drops-on-round-start: true # 新回合开始时清理上一回合的掉落物
     half-final-enabled: true
     half-final-title: "&6&l上半场最终局"
     match-point-enabled: true
-    match-point-title: "&c&l赛 点"
+    match-point-title: "&c&l赛点"
   journeymap-bridge:
     enabled: true
     sync-interval-ticks: 20         # 同步间隔

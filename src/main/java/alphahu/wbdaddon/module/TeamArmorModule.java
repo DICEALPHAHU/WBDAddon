@@ -14,6 +14,7 @@ import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.HandlerList;
 import org.bukkit.event.Listener;
+import org.bukkit.event.inventory.InventoryAction;
 import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.inventory.InventoryDragEvent;
 import org.bukkit.event.inventory.InventoryType;
@@ -30,6 +31,7 @@ import org.bukkit.scheduler.BukkitTask;
 
 import java.nio.charset.StandardCharsets;
 import java.util.UUID;
+import java.util.function.Consumer;
 
 /**
  * 队服模块：给 T / CT 穿固定颜色、<b>零防护</b>的染色皮革甲。
@@ -51,7 +53,8 @@ import java.util.UUID;
  *
  * <ul>
  *   <li>只对「参赛且存活」的玩家生效</li>
- *   <li>护甲槽被锁死：不能脱下、不能丢弃、不能拖拽</li>
+ *   <li>只锁<b>本模块发的队服</b>：不能脱下、不能丢弃、不能拖拽；
+ *       玩家自己的护甲默认不碰（见 {@code overwrite-existing}）</li>
  *   <li>死亡重生、回合重置后由定时任务自动补穿</li>
  *   <li>离开竞技场时移除，避免污染 WBD 的背包快照</li>
  * </ul>
@@ -75,6 +78,14 @@ public class TeamArmorModule implements AddonModule, Listener {
 
     private ItemStack[] tPieces;
     private ItemStack[] ctPieces;
+
+    /**
+     * 是否强行顶掉玩家原有的护甲。
+     *
+     * <p>默认 {@code false}：只往空槽里穿、或替换本模块自己发过的队服；
+     * 玩家自己穿的钻石套、下界合金套一律不碰，避免把人家的装备顶掉。
+     */
+    private boolean overwriteExisting;
 
     public TeamArmorModule(WBDAddon plugin) {
         this.plugin = plugin;
@@ -102,6 +113,8 @@ public class TeamArmorModule implements AddonModule, Listener {
 
         boolean zeroProtection = plugin.getConfig()
                 .getBoolean("modules.team-armor.zero-protection", true);
+        this.overwriteExisting = plugin.getConfig()
+                .getBoolean("modules.team-armor.overwrite-existing", false);
         DyeColor tColor = dye("modules.team-armor.t-color", DyeColor.RED);
         DyeColor ctColor = dye("modules.team-armor.ct-color", DyeColor.BLUE);
 
@@ -116,7 +129,8 @@ public class TeamArmorModule implements AddonModule, Listener {
                 plugin, this::tick, 0L, Math.max(1L, interval));
 
         plugin.getLogger().info("队伍护甲已启动：T=" + tColor + "，CT=" + ctColor
-                + (zeroProtection ? "，护甲值已抵消为 0" : "，保留原始护甲值") + "。");
+                + (zeroProtection ? "，护甲值已抵消为 0" : "，保留原始护甲值")
+                + (overwriteExisting ? "，强制覆盖原有护甲" : "，只填空槽/替换自己的队服") + "。");
     }
 
     @Override
@@ -162,10 +176,37 @@ public class TeamArmorModule implements AddonModule, Listener {
         if (pieces == null) return;
 
         PlayerInventory inventory = player.getInventory();
-        if (!isOursFor(inventory.getHelmet(), teamId)) inventory.setHelmet(pieces[0].clone());
-        if (!isOursFor(inventory.getChestplate(), teamId)) inventory.setChestplate(pieces[1].clone());
-        if (!isOursFor(inventory.getLeggings(), teamId)) inventory.setLeggings(pieces[2].clone());
-        if (!isOursFor(inventory.getBoots(), teamId)) inventory.setBoots(pieces[3].clone());
+        ensurePiece(player, inventory.getHelmet(), pieces[0], inventory::setHelmet, teamId);
+        ensurePiece(player, inventory.getChestplate(), pieces[1], inventory::setChestplate, teamId);
+        ensurePiece(player, inventory.getLeggings(), pieces[2], inventory::setLeggings, teamId);
+        ensurePiece(player, inventory.getBoots(), pieces[3], inventory::setBoots, teamId);
+    }
+
+    /**
+     * 确保某个护甲槽是本队的队服。
+     *
+     * <ul>
+     *   <li>已经是本队队服 → 不动</li>
+     *   <li>空槽，或旧队服（换边后颜色不对）→ 直接换</li>
+     *   <li>玩家自己的护甲 → 只有 {@code overwrite-existing: true} 才动，
+     *       且原护甲会丢到玩家脚下，不会凭空销毁</li>
+     * </ul>
+     */
+    private void ensurePiece(Player player, ItemStack current, ItemStack piece,
+                             Consumer<ItemStack> setter, String teamId) {
+        if (isOursFor(current, teamId)) return;
+
+        boolean empty = current == null || current.getType().isAir();
+        boolean ours = isOurs(current);
+        if (!empty && !ours && !overwriteExisting) {
+            // 玩家自己的护甲，默认绝不抢占
+            return;
+        }
+        if (!empty && !ours) {
+            // 覆盖模式：把原护甲丢到脚下，至少不凭空销毁
+            player.getWorld().dropItemNaturally(player.getLocation(), current.clone());
+        }
+        setter.accept(piece.clone());
     }
 
     // ------------------------------------------------------------------
@@ -183,9 +224,13 @@ public class TeamArmorModule implements AddonModule, Listener {
             event.setCancelled(true);
             return;
         }
-        // 护甲槽本身也锁死，避免玩家把自己的东西塞进去或换出来
-        if (event.getSlotType() == InventoryType.SlotType.ARMOR) {
-            event.setCancelled(true);
+        // 玩家自己的护甲不锁：overwrite-existing=false 时本来就该让他自由更换。
+        // 但要挡住「Shift 点击把别的头盔塞进我们占着的槽位」，否则队服会被顶掉。
+        if (event.getAction() == InventoryAction.MOVE_TO_OTHER_INVENTORY) {
+            EquipmentSlot target = armorSlotOf(event.getCurrentItem());
+            if (target != null && isOurs(armorItem(player.getInventory(), target))) {
+                event.setCancelled(true);
+            }
         }
     }
 
@@ -198,10 +243,14 @@ public class TeamArmorModule implements AddonModule, Listener {
         // 指的是容器格子，不是护甲槽，不能误伤。
         if (event.getView().getType() != InventoryType.CRAFTING) return;
 
-        // 玩家背包视图里，护甲槽是 raw slot 5..8
-        boolean touchesArmor = event.getRawSlots().stream()
-                .anyMatch(slot -> slot >= 5 && slot <= 8);
-        if (touchesArmor) {
+        // 玩家背包视图里，护甲槽是 raw slot 5..8。
+        // 只拦「碰到队服」的拖拽；玩家自己的护甲随他拖。
+        boolean touchesOurs = event.getRawSlots().stream()
+                .anyMatch(slot -> slot >= 5 && slot <= 8
+                        && isOurs(event.getView().getItem(slot)));
+        boolean draggingOurs = event.getNewItems().values().stream()
+                .anyMatch(this::isOurs);
+        if (touchesOurs || draggingOurs) {
             event.setCancelled(true);
         }
     }
@@ -309,6 +358,36 @@ public class TeamArmorModule implements AddonModule, Listener {
         if (isOurs(inventory.getChestplate())) inventory.setChestplate(null);
         if (isOurs(inventory.getLeggings())) inventory.setLeggings(null);
         if (isOurs(inventory.getBoots())) inventory.setBoots(null);
+    }
+
+    /** 根据物品材质推断它会被 Shift 点击穿到哪个护甲槽；不是护甲返回 null。 */
+    private EquipmentSlot armorSlotOf(ItemStack item) {
+        if (item == null || item.getType().isAir()) return null;
+        String name = item.getType().name();
+        if (name.endsWith("_HELMET") || name.endsWith("_HEAD") || name.endsWith("_SKULL")
+                || name.equals("CARVED_PUMPKIN")) {
+            return EquipmentSlot.HEAD;
+        }
+        if (name.endsWith("_CHESTPLATE") || name.equals("ELYTRA")) {
+            return EquipmentSlot.CHEST;
+        }
+        if (name.endsWith("_LEGGINGS")) {
+            return EquipmentSlot.LEGS;
+        }
+        if (name.endsWith("_BOOTS")) {
+            return EquipmentSlot.FEET;
+        }
+        return null;
+    }
+
+    private ItemStack armorItem(PlayerInventory inventory, EquipmentSlot slot) {
+        return switch (slot) {
+            case HEAD -> inventory.getHelmet();
+            case CHEST -> inventory.getChestplate();
+            case LEGS -> inventory.getLeggings();
+            case FEET -> inventory.getBoots();
+            default -> null;
+        };
     }
 
     private DyeColor dye(String path, DyeColor fallback) {
