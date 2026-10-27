@@ -3,9 +3,11 @@ package alphahu.wbdaddon.module;
 import alphahu.wbdaddon.WBDAddon;
 import alphahu.wbdaddon.api.AddonMode;
 import alphahu.wbdaddon.mode.BombDefuseMode;
+import alphahu.wbdaddon.util.WeaponNames;
 import com.warz.bombdefuse.api.WbdBombDefuseCompleteEvent;
 import com.warz.bombdefuse.api.WbdBombPlantCompleteEvent;
 import com.warz.bombdefuse.api.WbdMatchEndEvent;
+import com.warz.bombdefuse.api.WbdMoneyChangeEvent;
 import com.warz.bombdefuse.api.WbdPlayerEliminatedEvent;
 import com.warz.bombdefuse.api.WbdRoundEndEvent;
 import com.warz.bombdefuse.api.WbdRoundStartEvent;
@@ -15,8 +17,11 @@ import com.warz.bombdefuse.model.RoundEndReason;
 import com.warz.bombdefuse.model.Team;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
+import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
+import org.bukkit.entity.Projectile;
 import org.bukkit.event.EventHandler;
+import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.HandlerList;
 import org.bukkit.event.Listener;
@@ -177,6 +182,39 @@ public class RoundSummaryModule implements AddonModule, Listener {
                 state.firstKillerTeam = session == null ? null : session.getTeam(killer);
             }
         }
+
+        if (victim != null && killer != null) {
+            Cause cause = state.lastCause.remove(victim.getUniqueId());
+            String weapon;
+            if (cause == null) {
+                weapon = WeaponNames.resolve(killer, plugin.getTacZApi(), plugin.isTacZAvailable());
+            } else {
+                weapon = switch (cause.kind()) {
+                    case "投掷物" -> "投掷物";
+                    case "近战" -> "拳头";
+                    default -> WeaponNames.resolve(killer, plugin.getTacZApi(), plugin.isTacZAvailable());
+                };
+            }
+            state.killStories.add("本回合 " + victim.getName() + " 被 "
+                    + killer.getName() + " 用 " + weapon + " 淘汰");
+        }
+
+        if (state.clutcher == null) {
+            Team victimTeam = event.getVictimTeam();
+            Team other = victimTeam == Team.T ? Team.CT : Team.T;
+            ArenaSession session = session(event.getArenaId());
+            if (session != null && session.aliveCount(victimTeam) == 1
+                    && session.aliveCount(other) >= 2) {
+                for (PlayerRecord record : session.getPlayers()) {
+                    if (record.isAlive() && record.getTeam() == victimTeam) {
+                        state.clutcher = record.getName();
+                        state.clutchEnemies = session.aliveCount(other);
+                        state.clutcherTeam = victimTeam;
+                        break;
+                    }
+                }
+            }
+        }
     }
 
     @EventHandler
@@ -198,6 +236,64 @@ public class RoundSummaryModule implements AddonModule, Listener {
         state.defuser = event.getPlayer() == null ? null : event.getPlayer().getName();
         state.defuserId = event.getPlayer() == null ? null : event.getPlayer().getUniqueId();
         state.defuseAt = System.currentTimeMillis();
+
+        ArenaSession session = session(event.getArenaId());
+        if (session != null && session.getBomb() != null) {
+            state.defuseBombSeconds = Math.max(0, session.getBomb().getTicksRemaining() / 20);
+        }
+    }
+
+    @EventHandler
+    public void onMoneyChange(WbdMoneyChangeEvent event) {
+        if (event.getDelta() >= 0) return;
+        ArenaState state = arenaStates.get(event.getArenaId());
+        if (state == null) return;
+        int spent = -event.getDelta();
+        state.totalSpend += spent;
+        if (event.getPlayer() != null) {
+            state.spend.merge(event.getPlayer().getUniqueId(), spent, Integer::sum);
+        }
+    }
+
+    /** 记录击杀原因：拳头 / 投掷物 / 枪。 */
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onDamage(EntityDamageByEntityEvent event) {
+        if (!(event.getEntity() instanceof Player victim)) return;
+        String arenaId = arenaIdOf(victim);
+        if (arenaId == null) return;
+        ArenaState state = arenaStates.get(arenaId);
+        if (state == null) return;
+
+        Entity damager = event.getDamager();
+        if (damager instanceof Player player) {
+            boolean fist = "拳头".equals(WeaponNames.resolve(
+                    player, plugin.getTacZApi(), plugin.isTacZAvailable()));
+            if (fist) {
+                state.lastCause.put(victim.getUniqueId(),
+                        new Cause(player.getUniqueId(), "近战"));
+            }
+        } else if (damager instanceof Projectile projectile
+                && projectile.getShooter() instanceof Player shooter) {
+            state.lastCause.put(victim.getUniqueId(),
+                    new Cause(shooter.getUniqueId(), "投掷物"));
+        }
+    }
+
+    void recordGunCause(Player attacker, Entity victim) {
+        if (!(victim instanceof Player player)) return;
+        String arenaId = arenaIdOf(player);
+        if (arenaId == null) return;
+        ArenaState state = arenaStates.get(arenaId);
+        if (state != null) {
+            state.lastCause.put(player.getUniqueId(),
+                    new Cause(attacker.getUniqueId(), "枪"));
+        }
+    }
+
+    private String arenaIdOf(Player player) {
+        if (plugin.getApi() == null) return null;
+        AddonMode mode = plugin.getApi().getModeFor(player);
+        return mode == null ? null : mode.getArenaId(player);
     }
 
     @EventHandler
@@ -283,7 +379,7 @@ public class RoundSummaryModule implements AddonModule, Listener {
         return score;
     }
 
-    /** 只取本回合的数据，按 CS「趣味数据」的写法：选手 + 单回合 + 具体数字。 */
+    /** 只取本回合的数据，按 CS「趣味数据」的写法：选手 + 本回合 + 具体数字。 */
     private String randomFact(WbdRoundEndEvent event, ArenaState state,
                               ArenaSession session, int roundSeconds, int firstKillSeconds) {
         List<String> facts = new ArrayList<>();
@@ -358,8 +454,8 @@ public class RoundSummaryModule implements AddonModule, Listener {
 
         // 结束方式
         switch (event.getReason()) {
-            case CT_ELIMINATED -> facts.add("T 方单回合 " + roundSeconds + " 秒全歼 CT");
-            case T_ELIMINATED -> facts.add("CT 方单回合 " + roundSeconds + " 秒全歼 T");
+            case CT_ELIMINATED -> facts.add("T 方本回合 " + roundSeconds + " 秒全歼 CT");
+            case T_ELIMINATED -> facts.add("CT 方本回合 " + roundSeconds + " 秒全歼 T");
             case BOMB_EXPLODED -> facts.add("本回合 C4 爆炸");
             case BOMB_DEFUSED -> facts.add("本回合 CT 拆包成功");
             case TIME_EXPIRED -> facts.add("本回合时间耗尽");
@@ -367,42 +463,42 @@ public class RoundSummaryModule implements AddonModule, Listener {
             }
         }
 
-        // 选手 + 单回合 + 数字
+        // 选手 + 本回合 + 数字
         if (topKills > 0) {
-            facts.add(topKiller.getName() + " 单回合 " + topKills + " 杀");
+            facts.add(topKiller.getName() + " 本回合 " + topKills + " 杀");
         }
         if (maxDamage > 0) {
-            facts.add(topDamage.getName() + " 单回合打出 " + maxDamage + " 伤害");
+            facts.add(topDamage.getName() + " 本回合打出 " + maxDamage + " 伤害");
         }
         if (topHeadshotCount > 0) {
-            facts.add(topHeadshots.getName() + " 单回合 " + topHeadshotCount + " 个爆头");
+            facts.add(topHeadshots.getName() + " 本回合 " + topHeadshotCount + " 个爆头");
         }
         if (bestAccuracy != null) {
-            facts.add(bestAccuracy.getName() + " 单回合命中率 "
+            facts.add(bestAccuracy.getName() + " 本回合命中率 "
                     + Math.round(bestAccuracyValue * 100) + "%");
         }
         if (mostMiss != null && maxMiss > 0) {
-            facts.add(mostMiss.getName() + " 单回合 " + maxShots
+            facts.add(mostMiss.getName() + " 本回合 " + maxShots
                     + " 发子弹只中 " + Math.max(0, maxShots - maxMiss) + " 发");
         } else if (mostShots != null && maxShots > 0) {
-            facts.add(mostShots.getName() + " 单回合 " + maxShots + " 发子弹");
+            facts.add(mostShots.getName() + " 本回合 " + maxShots + " 发子弹");
         }
         if (state.firstVictim != null && firstKillSeconds >= 0) {
-            facts.add(state.firstVictim + " 单回合 " + firstKillSeconds + " 秒就被击杀");
+            facts.add(state.firstVictim + " 本回合 " + firstKillSeconds + " 秒就被击杀");
         }
         if (worstDeaths > 1) {
-            facts.add(topDeaths.getName() + " 单回合 " + worstDeaths + " 次死亡");
+            facts.add(topDeaths.getName() + " 本回合 " + worstDeaths + " 次死亡");
         }
         if (quietest != null) {
-            facts.add(quietest.getName() + " 单回合 0 杀 0 死");
+            facts.add(quietest.getName() + " 本回合 0 杀 0 死");
         }
         if (state.planter != null && state.plantAt > 0) {
             int sec = (int) ((state.plantAt - state.roundStart) / 1000);
-            facts.add(state.planter + " 单回合下包，用时 " + sec + " 秒");
+            facts.add(state.planter + " 本回合下包，用时 " + sec + " 秒");
         }
         if (state.defuser != null && state.defuseAt > 0) {
             int sec = (int) ((state.defuseAt - state.roundStart) / 1000);
-            facts.add(state.defuser + " 单回合拆包，用时 " + sec + " 秒");
+            facts.add(state.defuser + " 本回合拆包，用时 " + sec + " 秒");
         }
 
         // 独活
@@ -416,8 +512,65 @@ public class RoundSummaryModule implements AddonModule, Listener {
             }
         }
         if (lone != null) {
-            facts.add(lone + " 单回合独活");
+            facts.add(lone + " 本回合独活");
         }
+
+        // 拆包时炸弹剩余
+        if (state.defuser != null && state.defuseBombSeconds >= 0) {
+            facts.add(state.defuser + " 在炸弹还有 " + state.defuseBombSeconds + " 秒爆炸时将其拆除");
+        }
+
+        // 经济
+        if (state.totalSpend > 0) {
+            facts.add("本回合双方花费了 " + state.totalSpend + " 元购买装备");
+        }
+        UUID topSpendId = null;
+        int maxSpend = -1;
+        UUID lowSpendId = null;
+        int minSpend = Integer.MAX_VALUE;
+        for (Map.Entry<UUID, Integer> entry : state.spend.entrySet()) {
+            if (entry.getValue() > maxSpend) {
+                maxSpend = entry.getValue();
+                topSpendId = entry.getKey();
+            }
+            if (entry.getValue() < minSpend) {
+                minSpend = entry.getValue();
+                lowSpendId = entry.getKey();
+            }
+        }
+        if (topSpendId != null) {
+            PlayerRecord record = session.getRecord(topSpendId);
+            if (record != null) {
+                facts.add("本回合 " + record.getName() + " 花费最高（" + maxSpend + " 元）");
+            }
+        }
+        if (lowSpendId != null && minSpend < maxSpend) {
+            PlayerRecord record = session.getRecord(lowSpendId);
+            if (record != null) {
+                facts.add("本回合 " + record.getName() + " 花费最少（" + minSpend + " 元）");
+            }
+        }
+
+        // 一枪没开就阵亡
+        for (PlayerRecord record : players) {
+            int deaths = state.roundDeaths.getOrDefault(record.getUuid(), 0);
+            Counter counter = state.counters.get(record.getUuid());
+            int playerShots = counter == null ? 0 : counter.shots;
+            if (deaths > 0 && playerShots == 0) {
+                facts.add(record.getName() + " 本回合一枪没开就阵亡");
+                break;
+            }
+        }
+
+        // 1vN
+        if (state.clutcher != null) {
+            boolean survived = state.clutcherTeam == event.getWinner();
+            facts.add("本回合 " + state.clutcher + " 1v" + state.clutchEnemies
+                    + (survived ? " 后存活了下来" : " 后被淘汰"));
+        }
+
+        // 击杀叙事
+        facts.addAll(state.killStories);
 
         // 回合整体
         if (!players.isEmpty() && state.roundDeathsTotal >= players.size()) {
@@ -484,6 +637,9 @@ public class RoundSummaryModule implements AddonModule, Listener {
         return ChatColor.translateAlternateColorCodes('&', s == null ? "" : s);
     }
 
+    private record Cause(UUID killer, String kind) {
+    }
+
     private static final class Counter {
         int shots;
         int hits;
@@ -507,6 +663,14 @@ public class RoundSummaryModule implements AddonModule, Listener {
         long defuseAt;
         int totalDamage;
         final Map<UUID, Integer> damage = new ConcurrentHashMap<>();
+        int defuseBombSeconds = -1;
+        int totalSpend;
+        final Map<UUID, Integer> spend = new ConcurrentHashMap<>();
+        String clutcher;
+        int clutchEnemies;
+        Team clutcherTeam;
+        final Map<UUID, Cause> lastCause = new ConcurrentHashMap<>();
+        final List<String> killStories = new ArrayList<>();
         int roundDeathsTotal;
         int roundPlants;
         int roundDefuses;
@@ -531,6 +695,14 @@ public class RoundSummaryModule implements AddonModule, Listener {
             defuseAt = 0;
             totalDamage = 0;
             damage.clear();
+            defuseBombSeconds = -1;
+            totalSpend = 0;
+            spend.clear();
+            clutcher = null;
+            clutchEnemies = 0;
+            clutcherTeam = null;
+            lastCause.clear();
+            killStories.clear();
             roundDeathsTotal = 0;
             roundPlants = 0;
             roundDefuses = 0;

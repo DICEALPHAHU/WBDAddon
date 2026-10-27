@@ -34,6 +34,7 @@ public final class TacZStatsListener implements Listener {
     public void onHurt(TacZEntityHurtPreBridgeEvent event) {
         if (event.getAttacker() instanceof Player player) {
             module.countHit(player, event.isHeadShot(), event.getBaseAmount());
+            module.recordGunCause(player, event.getHurtEntity());
         }
     }
 }
