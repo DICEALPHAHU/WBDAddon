@@ -12,6 +12,7 @@ import alphahu.wbdaddon.module.JourneyMapModule;
 import alphahu.wbdaddon.module.KillReportsModule;
 import alphahu.wbdaddon.module.MatchStatusModule;
 import alphahu.wbdaddon.module.ModuleManager;
+import alphahu.wbdaddon.module.PositionBackupModule;
 import alphahu.wbdaddon.module.RoundEventsModule;
 import alphahu.wbdaddon.module.TeamArmorModule;
 import alphahu.wbdaddon.module.TechnicalPauseModule;
@@ -126,6 +127,7 @@ public final class WBDAddon extends JavaPlugin {
         moduleManager.register(new BombDefuseSoundModule(this));
         moduleManager.register(new ArenaHungerModule(this));
         moduleManager.register(new ArenaEffectsModule(this));
+        moduleManager.register(new PositionBackupModule(this));
         moduleManager.register(new ArenaDropsModule(this));
         moduleManager.register(new TeamArmorModule(this));
         moduleManager.register(new RoundEventsModule(this));

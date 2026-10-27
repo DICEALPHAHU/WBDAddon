@@ -20,6 +20,7 @@ WarZBombDefuse 的第三方附加组件合集 —— 击杀报告 / 单人伤害
 | 队伍护甲 | `team-armor` | T / CT 穿固定颜色的染色皮革甲，护甲值已抵消为 0；默认只填空槽，不顶掉玩家自己的护甲 |
 | 回合事件 | `round-events` | 回合结束清理竞技场掉落物；回合开始时提示「上半场最终局」与「赛点」 |
 | 药水效果清理 | `arena-effects` | 进场与每回合开始时清空药水效果，防止带抗性/速度/力量进场 |
+| 进场位置兜底 | `position-backup` | 记录进场前的位置，服务器重启/插件卸载时传回，重启后登录再补一次 |
 | 技术暂停 | `technical-pause` | `/wbdaddon pause` 管理员即时暂停、`/pause` 玩家每队限次（下一回合开始生效）；顶部 BossBar 倒计时，冻结回合与 C4 计时及玩家操作 |
 | JourneyMap 桥接 | `journeymap-bridge` | 同步 WBD 队伍数据到原版 Team，配合 JourneyMap Teams 队友可见、敌军隐藏、观战消失 |
 | 模式接入 API | — | 通过 `WbdAddonApi` 让第三方模式复用上面这些能力，不必各写一份 |
@@ -110,6 +111,11 @@ modules:
     clear-on-join: true             # 进场时清空药水效果
     clear-on-round-start: true      # 每回合开始再清一次
     keep: []                        # 白名单，例如 [NIGHT_VISION]
+    debug: false
+  position-backup:
+    enabled: true
+    restore-on-disable: true      # 卸载/关服时把在场玩家传回
+    restore-on-rejoin: true       # 重启后登录再补一次
     debug: false
   arena-drops:
     enabled: true
