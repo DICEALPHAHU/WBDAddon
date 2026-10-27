@@ -29,16 +29,15 @@ import java.util.concurrent.ThreadLocalRandom;
 /**
  * 回合结算展示。
  *
- * <p>回合结束时屏幕中央上方：
+ * <p>回合结束时屏幕中央：
  * <pre>
- * T 阵营胜利 | MVP: AlphaHu
- * 本回合 T 方 42 秒全歼 CT
+ * T 阵营胜利
+ * MVP: AlphaHu | 本回合 T 方 42 秒全歼 CT
  * </pre>
  *
- * <p>第二行从一组「本场趣闻」里<b>随机挑一条</b>：全歼用时、首杀时间、C4 爆炸、
- * 拆包、命中率、爆头数、下包次数、总时长……避免每回合都是同一句话。
- *
- * <p>射击数据来自 TacZ 桥接事件；没装 TacZ 时自动跳过相关候选。
+ * <p>副标题从一大组「本场趣闻」里<b>随机挑一条</b>。候选覆盖：
+ * 全歼/拆包/爆炸/时间到、首杀、首个阵亡、回合用时、总时长、比分、分差、
+ * 最惨、最准、爆头王、最长/最短回合、连胜、C4 爆炸次数、总击杀、MVP K/D 等。
  *
  * @author AlphaHu
  */
@@ -49,14 +48,8 @@ public class RoundSummaryModule implements AddonModule, Listener {
     /** 本场射击统计。 */
     private final Map<UUID, Counter> counters = new ConcurrentHashMap<>();
 
-    /** 本回合开始时间。 */
-    private final Map<String, Long> roundStart = new ConcurrentHashMap<>();
-    /** 本场比赛开始时间。 */
-    private final Map<String, Long> matchStart = new ConcurrentHashMap<>();
-    /** 本回合首杀时间。 */
-    private final Map<String, Long> firstKill = new ConcurrentHashMap<>();
-    /** 本回合阵亡人数。 */
-    private final Map<String, Integer> roundDeaths = new ConcurrentHashMap<>();
+    /** 每个竞技场的计时与连胜等状态。 */
+    private final Map<String, ArenaStats> arenaStats = new ConcurrentHashMap<>();
 
     private TacZStatsListener tacZListener;
     private int fadeIn;
@@ -110,10 +103,7 @@ public class RoundSummaryModule implements AddonModule, Listener {
             tacZListener = null;
         }
         counters.clear();
-        roundStart.clear();
-        matchStart.clear();
-        firstKill.clear();
-        roundDeaths.clear();
+        arenaStats.clear();
         plugin.getLogger().info("回合结算展示已卸载。");
     }
 
@@ -147,32 +137,49 @@ public class RoundSummaryModule implements AddonModule, Listener {
     @EventHandler
     public void onRoundStart(WbdRoundStartEvent event) {
         String arenaId = event.getArenaId();
-        long now = System.currentTimeMillis();
-        roundStart.put(arenaId, now);
-        firstKill.remove(arenaId);
-        roundDeaths.remove(arenaId);
+        ArenaStats stats = arenaStats.computeIfAbsent(arenaId, k -> new ArenaStats());
+
+        stats.roundStart = System.currentTimeMillis();
+        stats.firstKillAt = -1;
+        stats.firstKiller = null;
+        stats.firstKillerTeam = null;
+        stats.firstVictim = null;
+        stats.roundDeaths = 0;
 
         if (event.getRound() <= 1) {
             counters.clear();
-            matchStart.put(arenaId, now);
+            stats.matchStart = stats.roundStart;
+            stats.minRoundSeconds = Integer.MAX_VALUE;
+            stats.maxRoundSeconds = 0;
+            stats.lastWinner = null;
+            stats.streak = 0;
+            stats.bombExplosions = 0;
+            stats.defuses = 0;
         }
     }
 
     @EventHandler
     public void onEliminated(WbdPlayerEliminatedEvent event) {
-        String arenaId = event.getArenaId();
-        firstKill.putIfAbsent(arenaId, System.currentTimeMillis());
-        roundDeaths.merge(arenaId, 1, Integer::sum);
+        ArenaStats stats = arenaStats.computeIfAbsent(event.getArenaId(), k -> new ArenaStats());
+        stats.roundDeaths++;
+
+        if (stats.firstKillAt < 0) {
+            stats.firstKillAt = System.currentTimeMillis();
+            Player killer = event.getKiller();
+            Player victim = event.getVictim();
+            stats.firstKiller = killer == null ? null : killer.getName();
+            stats.firstVictim = victim == null ? null : victim.getName();
+            if (killer != null) {
+                ArenaSession session = session(event.getArenaId());
+                stats.firstKillerTeam = session == null ? null : session.getTeam(killer);
+            }
+        }
     }
 
     @EventHandler
     public void onMatchEnd(WbdMatchEndEvent event) {
-        String arenaId = event.getArenaId();
         counters.clear();
-        roundStart.remove(arenaId);
-        matchStart.remove(arenaId);
-        firstKill.remove(arenaId);
-        roundDeaths.remove(arenaId);
+        arenaStats.remove(event.getArenaId());
     }
 
     // ------------------------------------------------------------------
@@ -181,19 +188,30 @@ public class RoundSummaryModule implements AddonModule, Listener {
 
     @EventHandler(priority = EventPriority.MONITOR)
     public void onRoundEnd(WbdRoundEndEvent event) {
-        ArenaSession session = session(event.getArenaId());
+        String arenaId = event.getArenaId();
+        ArenaSession session = session(arenaId);
         if (session == null) return;
 
-        String arenaId = event.getArenaId();
+        ArenaStats stats = arenaStats.computeIfAbsent(arenaId, k -> new ArenaStats());
         long now = System.currentTimeMillis();
-        long roundStartAt = roundStart.getOrDefault(arenaId, now);
-        long matchStartAt = matchStart.getOrDefault(arenaId, roundStartAt);
-        int roundSeconds = (int) Math.max(0, (now - roundStartAt) / 1000);
-        int matchSeconds = (int) Math.max(0, (now - matchStartAt) / 1000);
-        Long firstKillAt = firstKill.get(arenaId);
-        int firstKillSeconds = firstKillAt == null ? -1
-                : (int) Math.max(0, (firstKillAt - roundStartAt) / 1000);
-        int roundDeathCount = roundDeaths.getOrDefault(arenaId, 0);
+        int roundSeconds = stats.roundStart <= 0 ? 0
+                : (int) Math.max(0, (now - stats.roundStart) / 1000);
+        int matchSeconds = stats.matchStart <= 0 ? roundSeconds
+                : (int) Math.max(0, (now - stats.matchStart) / 1000);
+        int firstKillSeconds = stats.firstKillAt < 0 ? -1
+                : (int) Math.max(0, (stats.firstKillAt - stats.roundStart) / 1000);
+
+        // 更新本场统计
+        stats.minRoundSeconds = Math.min(stats.minRoundSeconds, roundSeconds);
+        stats.maxRoundSeconds = Math.max(stats.maxRoundSeconds, roundSeconds);
+        if (stats.lastWinner == event.getWinner()) {
+            stats.streak++;
+        } else {
+            stats.lastWinner = event.getWinner();
+            stats.streak = 1;
+        }
+        if (event.getReason() == RoundEndReason.BOMB_EXPLODED) stats.bombExplosions++;
+        if (event.getReason() == RoundEndReason.BOMB_DEFUSED) stats.defuses++;
 
         Team winner = event.getWinner();
         PlayerRecord mvp = mvp(session, winner);
@@ -210,16 +228,40 @@ public class RoundSummaryModule implements AddonModule, Listener {
         int plants = 0;
         int defuses = 0;
         int deaths = 0;
+        int totalKills = 0;
+        PlayerRecord mostDeaths = null;
         for (PlayerRecord record : session.getPlayers()) {
             plants += record.getPlants();
             defuses += record.getDefuses();
             deaths += record.getDeaths();
+            totalKills += record.getKills();
+            if (mostDeaths == null || record.getDeaths() > mostDeaths.getDeaths()) {
+                mostDeaths = record;
+            }
+        }
+
+        PlayerRecord bestAccuracy = null;
+        double bestAccuracyValue = -1;
+        PlayerRecord topHeadshots = null;
+        for (Map.Entry<UUID, Counter> entry : counters.entrySet()) {
+            Counter c = entry.getValue();
+            if (c.shots >= 10) {
+                double acc = c.hits / (double) c.shots;
+                if (acc > bestAccuracyValue) {
+                    bestAccuracyValue = acc;
+                    bestAccuracy = session.getRecord(entry.getKey());
+                }
+            }
+            if (c.headshots > 0 && (topHeadshots == null
+                    || c.headshots > counters.get(topHeadshots.getUuid()).headshots)) {
+                topHeadshots = session.getRecord(entry.getKey());
+            }
         }
 
         String title = winnerName(winner);
-        String fact = randomFact(new Facts(event.getReason(), roundSeconds, matchSeconds,
-                firstKillSeconds, roundDeathCount, shots, hits, headshots,
-                plants, defuses, deaths, mvp));
+        String fact = randomFact(new Facts(event, stats, session, roundSeconds, matchSeconds,
+                firstKillSeconds, shots, hits, headshots, plants, defuses, deaths,
+                totalKills, mvp, mostDeaths, bestAccuracy, bestAccuracyValue, topHeadshots));
         String subtitle = "&eMVP: &f" + (mvp == null ? "无" : mvp.getName())
                 + " &7| " + fact;
 
@@ -230,57 +272,100 @@ public class RoundSummaryModule implements AddonModule, Listener {
         }
     }
 
-    /** 从候选里随机挑一条；没有候选时给个兜底。 */
+    /** 从候选里随机挑一条。 */
     private String randomFact(Facts f) {
         List<String> facts = new ArrayList<>();
 
-        if (f.reason == RoundEndReason.CT_ELIMINATED) {
-            facts.add("&7本回合 &cT 方 &f" + f.roundSeconds + " &7秒全歼 CT");
+        switch (f.event.getReason()) {
+            case CT_ELIMINATED -> facts.add("&7本回合 &cT 方 &f" + f.roundSeconds + " &7秒全歼 CT");
+            case T_ELIMINATED -> facts.add("&7本回合 &9CT 方 &f" + f.roundSeconds + " &7秒全歼 T");
+            case BOMB_EXPLODED -> facts.add("&7C4 爆炸，回合用时 &f" + f.roundSeconds + " &7秒");
+            case BOMB_DEFUSED -> facts.add("&7CT 拆包成功，回合用时 &f" + f.roundSeconds + " &7秒");
+            case TIME_EXPIRED -> facts.add("&7时间耗尽，本回合打了 &f" + f.roundSeconds + " &7秒");
+            default -> {
+            }
         }
-        if (f.reason == RoundEndReason.T_ELIMINATED) {
-            facts.add("&7本回合 &9CT 方 &f" + f.roundSeconds + " &7秒全歼 T");
+
+        if (f.event.getRound() > 0) {
+            facts.add("&7第 &f" + f.event.getRound() + " &7回合结束");
         }
-        if (f.reason == RoundEndReason.BOMB_EXPLODED) {
-            facts.add("&7C4 爆炸，回合用时 &f" + f.roundSeconds + " &7秒");
+        int t = f.event.getTScore();
+        int ct = f.event.getCtScore();
+        facts.add("&7当前比分 &cT " + t + " &7: &9CT " + ct);
+        if (t != ct) {
+            facts.add("&7分差 &f" + Math.abs(t - ct) + " &7分");
         }
-        if (f.reason == RoundEndReason.BOMB_DEFUSED) {
-            facts.add("&7CT 拆包成功，回合用时 &f" + f.roundSeconds + " &7秒");
+
+        if (f.stats.firstKiller != null) {
+            String team = f.stats.firstKillerTeam == null ? ""
+                    : (f.stats.firstKillerTeam == Team.T ? "&cT 方" : "&9CT 方");
+            facts.add("&7首杀：&f" + f.stats.firstKiller
+                    + (team.isEmpty() ? "" : " &7（" + team + "&7）")
+                    + " &7— 开局 &f" + f.firstKillSeconds + " &7秒");
         }
-        if (f.reason == RoundEndReason.TIME_EXPIRED) {
-            facts.add("&7时间耗尽，本回合打了 &f" + f.roundSeconds + " &7秒");
+        if (f.stats.firstVictim != null) {
+            facts.add("&7首个阵亡：&f" + f.stats.firstVictim);
         }
-        if (f.firstKillSeconds >= 0) {
-            facts.add("&7开局 &f" + f.firstKillSeconds + " &7秒出现首杀");
-        }
+
         if (f.roundSeconds > 0) {
             facts.add("&7本回合用时 &f" + f.roundSeconds + " &7秒");
         }
         if (f.matchSeconds > 0) {
             facts.add("&7本场已进行 &f" + clock(f.matchSeconds));
         }
-        if (f.roundDeathCount > 0) {
-            facts.add("&7本回合 &f" + f.roundDeathCount + " &7人阵亡");
+        if (f.stats.roundDeaths > 0) {
+            facts.add("&7本回合 &f" + f.stats.roundDeaths + " &7人阵亡");
+        } else {
+            facts.add("&7本回合无人阵亡");
         }
+
+        if (f.mostDeaths != null && f.mostDeaths.getDeaths() > 0) {
+            facts.add("&7本场最惨：&f" + f.mostDeaths.getName()
+                    + " &7阵亡 &f" + f.mostDeaths.getDeaths() + " &7次");
+        }
+        if (f.bestAccuracy != null) {
+            facts.add("&7本场最准：&f" + f.bestAccuracy.getName()
+                    + " &7命中率 &f" + Math.round(f.bestAccuracyValue * 100) + "%");
+        }
+        if (f.topHeadshots != null && f.headshots > 0) {
+            facts.add("&7本场爆头王：&f" + f.topHeadshots.getName());
+        }
+        if (f.mvp != null && f.mvp.getKills() > 0) {
+            facts.add("&7MVP &f" + f.mvp.getName() + " &7拿下 &f" + f.mvp.getKills() + " &7杀");
+            facts.add("&7MVP K/D：&f" + f.mvp.getKills() + "&7/&f" + f.mvp.getDeaths());
+        }
+
         if (f.shots > 0) {
             facts.add("&7本场发射 &f" + f.shots + " &7发，命中 &f" + f.hits + " &7发");
-        }
-        if (f.shots > 0) {
             facts.add("&7本场命中率 &f" + percent(f.hits, f.shots));
         }
         if (f.headshots > 0) {
             facts.add("&7本场爆头 &f" + f.headshots + " &7次");
         }
+
         if (f.plants > 0) {
             facts.add("&7本场下包 &f" + f.plants + " &7次");
         }
         if (f.defuses > 0) {
             facts.add("&7本场拆包 &f" + f.defuses + " &7次");
         }
+        if (f.stats.bombExplosions > 0) {
+            facts.add("&7本场 C4 爆炸 &f" + f.stats.bombExplosions + " &7次");
+        }
+        if (f.totalKills > 0) {
+            facts.add("&7本场总击杀 &f" + f.totalKills + " &7人");
+        }
         if (f.deaths > 0) {
             facts.add("&7本场累计阵亡 &f" + f.deaths + " &7人");
         }
-        if (f.mvp != null && f.mvp.getKills() > 0) {
-            facts.add("&7MVP &f" + f.mvp.getName() + " &7拿下 &f" + f.mvp.getKills() + " &7杀");
+
+        if (f.stats.streak >= 2) {
+            String who = f.stats.lastWinner == Team.T ? "&cT 方" : "&9CT 方";
+            facts.add("&7" + who + " &7已连胜 &f" + f.stats.streak + " &7回合");
+        }
+        if (f.event.getRound() > 1 && f.stats.minRoundSeconds < Integer.MAX_VALUE) {
+            facts.add("&7本场最短回合 &f" + f.stats.minRoundSeconds + " &7秒");
+            facts.add("&7本场最长回合 &f" + f.stats.maxRoundSeconds + " &7秒");
         }
 
         if (facts.isEmpty()) {
@@ -343,35 +428,66 @@ public class RoundSummaryModule implements AddonModule, Listener {
         int headshots;
     }
 
+    private static final class ArenaStats {
+        long roundStart;
+        long matchStart;
+        long firstKillAt = -1;
+        String firstKiller;
+        Team firstKillerTeam;
+        String firstVictim;
+        int roundDeaths;
+        int minRoundSeconds = Integer.MAX_VALUE;
+        int maxRoundSeconds;
+        Team lastWinner;
+        int streak;
+        int bombExplosions;
+        int defuses;
+    }
+
     private static final class Facts {
-        final RoundEndReason reason;
+        final WbdRoundEndEvent event;
+        final ArenaStats stats;
+        final ArenaSession session;
         final int roundSeconds;
         final int matchSeconds;
         final int firstKillSeconds;
-        final int roundDeathCount;
         final int shots;
         final int hits;
         final int headshots;
         final int plants;
         final int defuses;
         final int deaths;
+        final int totalKills;
         final PlayerRecord mvp;
+        final PlayerRecord mostDeaths;
+        final PlayerRecord bestAccuracy;
+        final double bestAccuracyValue;
+        final PlayerRecord topHeadshots;
 
-        Facts(RoundEndReason reason, int roundSeconds, int matchSeconds, int firstKillSeconds,
-              int roundDeathCount, int shots, int hits, int headshots,
-              int plants, int defuses, int deaths, PlayerRecord mvp) {
-            this.reason = reason;
+        Facts(WbdRoundEndEvent event, ArenaStats stats, ArenaSession session,
+              int roundSeconds, int matchSeconds, int firstKillSeconds,
+              int shots, int hits, int headshots, int plants, int defuses,
+              int deaths, int totalKills, PlayerRecord mvp, PlayerRecord mostDeaths,
+              PlayerRecord bestAccuracy, double bestAccuracyValue,
+              PlayerRecord topHeadshots) {
+            this.event = event;
+            this.stats = stats;
+            this.session = session;
             this.roundSeconds = roundSeconds;
             this.matchSeconds = matchSeconds;
             this.firstKillSeconds = firstKillSeconds;
-            this.roundDeathCount = roundDeathCount;
             this.shots = shots;
             this.hits = hits;
             this.headshots = headshots;
             this.plants = plants;
             this.defuses = defuses;
             this.deaths = deaths;
+            this.totalKills = totalKills;
             this.mvp = mvp;
+            this.mostDeaths = mostDeaths;
+            this.bestAccuracy = bestAccuracy;
+            this.bestAccuracyValue = bestAccuracyValue;
+            this.topHeadshots = topHeadshots;
         }
     }
 }
