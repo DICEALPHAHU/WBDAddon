@@ -283,7 +283,7 @@ public class RoundSummaryModule implements AddonModule, Listener {
         return score;
     }
 
-    /** 只取本回合的数据，按 CS「趣味数据」的口吻写。 */
+    /** 只取本回合的数据，按 CS「趣味数据」的写法：选手 + 单回合 + 具体数字。 */
     private String randomFact(WbdRoundEndEvent event, ArenaState state,
                               ArenaSession session, int roundSeconds, int firstKillSeconds) {
         List<String> facts = new ArrayList<>();
@@ -358,97 +358,54 @@ public class RoundSummaryModule implements AddonModule, Listener {
 
         // 结束方式
         switch (event.getReason()) {
-            case CT_ELIMINATED -> facts.add("&7T 方 &f" + roundSeconds + " &7秒就把 CT 清空了，干净利落");
-            case T_ELIMINATED -> facts.add("&7CT 方 &f" + roundSeconds + " &7秒解决战斗，T 方连包都没摸着");
-            case BOMB_EXPLODED -> facts.add("&7C4 炸了，T 方白忙活 &f" + roundSeconds + " &7秒，也算没白忙");
-            case BOMB_DEFUSED -> facts.add("&7CT 在最后一刻拆掉 C4，T 方的心态崩了");
-            case TIME_EXPIRED -> facts.add("&7时间耗尽，双方一起等来了下半场");
+            case CT_ELIMINATED -> facts.add("T 方单回合 " + roundSeconds + " 秒全歼 CT");
+            case T_ELIMINATED -> facts.add("CT 方单回合 " + roundSeconds + " 秒全歼 T");
+            case BOMB_EXPLODED -> facts.add("本回合 C4 爆炸");
+            case BOMB_DEFUSED -> facts.add("本回合 CT 拆包成功");
+            case TIME_EXPIRED -> facts.add("本回合时间耗尽");
             default -> {
             }
         }
 
-        // 各类「最」
-        if (state.firstVictim != null && firstKillSeconds >= 0) {
-            facts.add("&7最速传说：&f" + state.firstVictim + " &7开局 &f"
-                    + firstKillSeconds + " &7秒就下班了");
-        }
-        if (state.firstKiller != null) {
-            String team = state.firstKillerTeam == null ? ""
-                    : (state.firstKillerTeam == Team.T ? " &cT 方" : " &9CT 方");
-            facts.add("&7首杀来自 &f" + state.firstKiller + team + "&7，只用 &f"
-                    + firstKillSeconds + " &7秒");
-        }
+        // 选手 + 单回合 + 数字
         if (topKills > 0) {
-            facts.add("&7本回合最忙的人：&f" + topKiller.getName() + " &7拿了 &f"
-                    + topKills + " &7杀，手都打酸了");
-        }
-        if (worstDeaths > 1) {
-            facts.add("&7本回合最惨：&f" + topDeaths.getName() + " &7死了 &f"
-                    + worstDeaths + " &7次，复活点都没捂热");
+            facts.add(topKiller.getName() + " 单回合 " + topKills + " 杀");
         }
         if (maxDamage > 0) {
-            facts.add("&7伤害王：&f" + topDamage.getName() + " &7打出 &f"
-                    + maxDamage + " &7点伤害");
+            facts.add(topDamage.getName() + " 单回合打出 " + maxDamage + " 伤害");
         }
-        if (maxDamage > 100 && topDamage != null
-                && state.roundKills.getOrDefault(topDamage.getUuid(), 0) == 0) {
-            facts.add("&7最冤的人：&f" + topDamage.getName() + " &7打了 &f"
-                    + maxDamage + " &7伤害，一个人没杀");
-        }
-        if (quietest != null) {
-            facts.add("&7最安静：&f" + quietest.getName() + " &70 杀 0 死 0 伤害，全程隐身");
-        }
-        if (state.roundDeathsTotal == 0) {
-            facts.add("&7本回合最和平：一个人都没死，大家在开茶话会");
-        } else if (state.roundDeathsTotal <= 2) {
-            facts.add("&7本回合最和平：只死了 &f" + state.roundDeathsTotal + " &7个人");
-        }
-        if (!players.isEmpty() && state.roundDeathsTotal >= players.size()) {
-            facts.add("&7本回合最血腥：&f" + state.roundDeathsTotal + " &7个人全躺了");
-        }
-        if (roundSeconds > 0 && roundSeconds <= 25) {
-            facts.add("&7本回合 &f" + roundSeconds + " &7秒结束，快得像投降");
-        }
-        if (roundSeconds >= 90) {
-            facts.add("&7本回合打了 &f" + roundSeconds + " &7秒，双方都在等对方先动");
+        if (topHeadshotCount > 0) {
+            facts.add(topHeadshots.getName() + " 单回合 " + topHeadshotCount + " 个爆头");
         }
         if (bestAccuracy != null) {
-            facts.add("&7最准：&f" + bestAccuracy.getName() + " &7命中率 &f"
-                    + Math.round(bestAccuracyValue * 100) + "%&7，子弹长眼睛");
-        }
-        if (topHeadshots != null && topHeadshotCount > 0) {
-            facts.add("&7爆头王：&f" + topHeadshots.getName() + " &7（&f"
-                    + topHeadshotCount + " &7个爆头）");
-        }
-        if (mostShots != null && maxShots > 0) {
-            facts.add("&7最败家：&f" + mostShots.getName() + " &7打了 &f"
-                    + maxShots + " &7发子弹");
+            facts.add(bestAccuracy.getName() + " 单回合命中率 "
+                    + Math.round(bestAccuracyValue * 100) + "%");
         }
         if (mostMiss != null && maxMiss > 0) {
-            facts.add("&7最铁：&f" + mostMiss.getName() + " &7有 &f"
-                    + maxMiss + " &7发子弹没找到人");
+            facts.add(mostMiss.getName() + " 单回合 " + maxShots
+                    + " 发子弹只中 " + Math.max(0, maxShots - maxMiss) + " 发");
+        } else if (mostShots != null && maxShots > 0) {
+            facts.add(mostShots.getName() + " 单回合 " + maxShots + " 发子弹");
         }
-        if (shots == 0) {
-            facts.add("&7本回合一枪没开，纯粹的和平主义");
-        } else {
-            facts.add("&7本回合共射出 &f" + shots + " &7发，只有 &f"
-                    + hits + " &7发找到目标");
+        if (state.firstVictim != null && firstKillSeconds >= 0) {
+            facts.add(state.firstVictim + " 单回合 " + firstKillSeconds + " 秒就被击杀");
         }
-
-        // 下包 / 拆包（写成人话）
+        if (worstDeaths > 1) {
+            facts.add(topDeaths.getName() + " 单回合 " + worstDeaths + " 次死亡");
+        }
+        if (quietest != null) {
+            facts.add(quietest.getName() + " 单回合 0 杀 0 死");
+        }
         if (state.planter != null && state.plantAt > 0) {
             int sec = (int) ((state.plantAt - state.roundStart) / 1000);
-            facts.add(sec <= 25
-                    ? "&7" + state.planter + " &7在 &f" + sec + " &7秒就下包，T 方这是闪电战"
-                    : "&7" + state.planter + " &7在第 &f" + sec + " &7秒下包，C4 终于落地");
+            facts.add(state.planter + " 单回合下包，用时 " + sec + " 秒");
         }
         if (state.defuser != null && state.defuseAt > 0) {
             int sec = (int) ((state.defuseAt - state.roundStart) / 1000);
-            facts.add("&7" + state.defuser + " &7在第 &f" + sec
-                    + " &7秒完成拆包，CT 全员松了口气");
+            facts.add(state.defuser + " 单回合拆包，用时 " + sec + " 秒");
         }
 
-        // 独活 / 坚挺
+        // 独活
         String lone = null;
         if (event.getWinner() != null && session.aliveCount(event.getWinner()) == 1) {
             for (PlayerRecord record : players) {
@@ -459,37 +416,37 @@ public class RoundSummaryModule implements AddonModule, Listener {
             }
         }
         if (lone != null) {
-            facts.add("&7" + lone + " &7独活到最后，队友都在看他");
-        }
-        PlayerRecord survivor = null;
-        for (PlayerRecord record : players) {
-            if (record.isAlive()
-                    && state.roundDeaths.getOrDefault(record.getUuid(), 0) == 0) {
-                survivor = record;
-                break;
-            }
-        }
-        if (survivor != null && !survivor.getName().equals(lone)) {
-            facts.add("&7最坚挺：&f" + survivor.getName() + " &7本回合一次都没死");
+            facts.add(lone + " 单回合独活");
         }
 
-        // 手枪局
-        if (isPistolRound(state.roundNumber) && topKills > 0) {
-            facts.add("&7手枪局，&f" + topKiller.getName() + " &7拿了 &f"
-                    + topKills + " &7杀");
+        // 回合整体
+        if (!players.isEmpty() && state.roundDeathsTotal >= players.size()) {
+            facts.add("本回合 " + state.roundDeathsTotal + " 人全灭");
+        } else if (state.roundDeathsTotal <= 2) {
+            facts.add("本回合只死了 " + state.roundDeathsTotal + " 人");
         }
-
-        // 伤害总量
-        if (state.totalDamage > 0) {
-            facts.add("&7本回合双方共打出 &f" + state.totalDamage + " &7点伤害");
+        if (state.roundDeathsTotal > 0) {
+            facts.add("本回合 " + state.roundDeathsTotal + " 人阵亡");
         }
         if (state.lastKillAt > 0 && state.roundStart > 0) {
             int sec = (int) ((state.lastKillAt - state.roundStart) / 1000);
-            facts.add("&7最后一杀发生在第 &f" + sec + " &7秒");
+            facts.add("本回合最后一杀在 " + sec + " 秒");
+        }
+        if (state.totalDamage > 0) {
+            facts.add("本回合双方共打出 " + state.totalDamage + " 伤害");
+        }
+        if (shots > 0) {
+            facts.add("本回合共射出 " + shots + " 发子弹");
+        }
+        if (roundSeconds > 0) {
+            facts.add("本回合用时 " + roundSeconds + " 秒");
+        }
+        if (isPistolRound(state.roundNumber) && topKills > 0) {
+            facts.add("手枪局，" + topKiller.getName() + " " + topKills + " 杀");
         }
 
         if (facts.isEmpty()) {
-            return "&7本回合结束";
+            return "本回合结束";
         }
         return facts.get(ThreadLocalRandom.current().nextInt(facts.size()));
     }
