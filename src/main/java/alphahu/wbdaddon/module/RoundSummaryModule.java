@@ -14,6 +14,7 @@ import com.warz.bombdefuse.api.WbdRoundEndEvent;
 import com.warz.bombdefuse.api.WbdRoundStartEvent;
 import com.warz.bombdefuse.arena.ArenaSession;
 import com.warz.bombdefuse.arena.PlayerRecord;
+import com.warz.bombdefuse.model.GameState;
 import com.warz.bombdefuse.model.RoundEndReason;
 import com.warz.bombdefuse.model.Team;
 import org.bukkit.Bukkit;
@@ -21,6 +22,7 @@ import org.bukkit.ChatColor;
 import org.bukkit.boss.BarColor;
 import org.bukkit.boss.BarStyle;
 import org.bukkit.boss.BossBar;
+import org.bukkit.scheduler.BukkitTask;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.Projectile;
@@ -360,10 +362,20 @@ public class RoundSummaryModule implements AddonModule, Listener {
             factBar.addPlayer(player);
         }
 
-        Bukkit.getScheduler().runTaskLater(plugin, () -> {
-            factBar.setVisible(false);
-            factBar.removeAll();
-        }, Math.max(60, stay));
+        // 趣闻条一直留到本回合彻底结束（WBD 离开 ROUND_END 状态）才收掉，
+        // 并加一个 20 秒硬上限，防止事件异常时一直挂在屏幕上
+        int[] elapsed = {0};
+        BukkitTask[] task = new BukkitTask[1];
+        task[0] = Bukkit.getScheduler().runTaskTimer(plugin, () -> {
+            elapsed[0] += 10;
+            ArenaSession current = session(arenaId);
+            boolean roundOver = current != null && current.getState() != GameState.ROUND_END;
+            if ((elapsed[0] > 20 && roundOver) || elapsed[0] > 400) {
+                factBar.setVisible(false);
+                factBar.removeAll();
+                if (task[0] != null) task[0].cancel();
+            }
+        }, 10L, 10L);
     }
 
     /** 本回合 MVP：只在胜方里选，没人的话退回全体。 */
