@@ -28,6 +28,10 @@ commands:
     description: 请求技术暂停（每队每场限次）
     usage: /pause
     aliases: [timeout]
+  wbda:
+    description: 打开 WBD 主菜单
+    usage: /wbda
+    aliases: [wbdmenu]
 
 permissions:
   wbdaddon.use:

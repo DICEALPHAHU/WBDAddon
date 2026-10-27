@@ -1,6 +1,7 @@
 package alphahu.wbdaddon;
 
 import alphahu.wbdaddon.api.WbdAddonApi;
+import alphahu.wbdaddon.command.MenuCommand;
 import alphahu.wbdaddon.command.PauseCommand;
 import alphahu.wbdaddon.command.WBDAddonCommand;
 import alphahu.wbdaddon.mode.ModeRegistry;
@@ -12,6 +13,7 @@ import alphahu.wbdaddon.module.FreezeCountdownModule;
 import alphahu.wbdaddon.module.JourneyMapModule;
 import alphahu.wbdaddon.module.KillReportsModule;
 import alphahu.wbdaddon.module.MatchStatusModule;
+import alphahu.wbdaddon.module.MenuModule;
 import alphahu.wbdaddon.module.ModuleManager;
 import alphahu.wbdaddon.module.PositionBackupModule;
 import alphahu.wbdaddon.module.RoundEventsModule;
@@ -133,6 +135,7 @@ public final class WBDAddon extends JavaPlugin {
         moduleManager.register(new TeamArmorModule(this));
         moduleManager.register(new RoundEventsModule(this));
         moduleManager.register(new FreezeCountdownModule(this));
+        moduleManager.register(new MenuModule(this));
         moduleManager.register(new TechnicalPauseModule(this));
         moduleManager.register(new JourneyMapModule(this));
 
@@ -160,6 +163,12 @@ public final class WBDAddon extends JavaPlugin {
         var pauseCmd = getCommand("pause");
         if (pauseCmd != null) {
             pauseCmd.setExecutor(new PauseCommand(this));
+        }
+
+        // 主菜单 /wbda
+        var menuCmd = getCommand("wbda");
+        if (menuCmd != null) {
+            menuCmd.setExecutor(new MenuCommand(this));
         }
 
         getLogger().info("WBDAddon 已加载，共启用 " + moduleManager.getEnabledModules().size() + " 个模块，"
