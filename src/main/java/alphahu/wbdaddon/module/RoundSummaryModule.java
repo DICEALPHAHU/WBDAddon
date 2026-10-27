@@ -18,6 +18,9 @@ import com.warz.bombdefuse.model.RoundEndReason;
 import com.warz.bombdefuse.model.Team;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
+import org.bukkit.boss.BarColor;
+import org.bukkit.boss.BarStyle;
+import org.bukkit.boss.BossBar;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.Projectile;
@@ -344,12 +347,23 @@ public class RoundSummaryModule implements AddonModule, Listener {
         String subtitle = "&eMVP: &f" + (mvp == null ? "无" : mvp.getName());
         String fact = randomFact(event, state, session, roundSeconds, firstKillSeconds);
 
+        // 第三行放到顶部 BossBar：标题只有 title + subtitle 两行，放不下第三行
+        BossBar factBar = Bukkit.createBossBar(
+                color("&e本回合趣闻 &7| " + fact), BarColor.YELLOW, BarStyle.SOLID);
+        factBar.setProgress(1.0);
+
         for (Player player : Bukkit.getOnlinePlayers()) {
             if (!inArena(player, arenaId)) continue;
             player.resetTitle();
             player.sendTitle(color(title), color(subtitle), fadeIn, stay, fadeOut);
             player.sendMessage(color("&e[回合结算] " + fact));
+            factBar.addPlayer(player);
         }
+
+        Bukkit.getScheduler().runTaskLater(plugin, () -> {
+            factBar.setVisible(false);
+            factBar.removeAll();
+        }, Math.max(60, stay));
     }
 
     /** 本回合 MVP：只在胜方里选，没人的话退回全体。 */
