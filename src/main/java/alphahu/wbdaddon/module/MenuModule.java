@@ -4,6 +4,8 @@ import alphahu.wbdaddon.WBDAddon;
 import alphahu.wbdaddon.api.AddonMode;
 import alphahu.wbdaddon.mode.BombDefuseMode;
 import com.warz.bombdefuse.api.WbdMatchEndEvent;
+import com.warz.bombdefuse.api.WbdPlayerLeaveArenaEvent;
+import com.warz.bombdefuse.api.WbdRoundStartEvent;
 import com.warz.bombdefuse.arena.ArenaSession;
 import com.warz.bombdefuse.arena.PlayerRecord;
 import com.warz.bombdefuse.config.ArenaConfig;
@@ -27,10 +29,13 @@ import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.inventory.meta.SkullMeta;
 
 import java.io.File;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -60,6 +65,15 @@ public class MenuModule implements AddonModule, Listener {
     /** 各竞技场最近一场比赛的结果。 */
     private final Map<String, LastResult> lastResults = new ConcurrentHashMap<>();
 
+    /** 玩家生涯统计（跨比赛累计）。 */
+    private final Map<UUID, Stats> stats = new ConcurrentHashMap<>();
+
+    /** 当前这场比赛已经计入过的玩家，避免离场和比赛结束重复累加。 */
+    private final Map<String, Set<UUID>> counted = new ConcurrentHashMap<>();
+
+    private File resultsFile;
+    private File statsFile;
+
     public MenuModule(WBDAddon plugin) {
         this.plugin = plugin;
     }
@@ -81,8 +95,14 @@ public class MenuModule implements AddonModule, Listener {
 
     @Override
     public void onEnable() {
+        this.resultsFile = new File(plugin.getDataFolder(), "menu-results.yml");
+        this.statsFile = new File(plugin.getDataFolder(), "player-stats.yml");
+        loadResults();
+        loadStats();
+
         Bukkit.getPluginManager().registerEvents(this, plugin);
-        plugin.getLogger().info("主菜单已启动：/wbda 打开。");
+        plugin.getLogger().info("主菜单已启动：/wbda 打开，已载入 "
+                + lastResults.size() + " 条比赛记录、" + stats.size() + " 份生涯数据。");
     }
 
     @Override
@@ -93,7 +113,11 @@ public class MenuModule implements AddonModule, Listener {
                 player.closeInventory();
             }
         }
+        saveResults();
+        saveStats();
         lastResults.clear();
+        stats.clear();
+        counted.clear();
         plugin.getLogger().info("主菜单已卸载。");
     }
 
@@ -356,6 +380,17 @@ public class MenuModule implements AddonModule, Listener {
                     }
                 }
             }
+            lore.add(color("&8— 生涯 —"));
+            Stats career = stats.get(player.getUniqueId());
+            if (career == null) {
+                lore.add(color("&7暂无生涯记录"));
+            } else {
+                lore.add(color("&7击杀：&c" + career.kills + " &7死亡：&f" + career.deaths
+                        + " &7K/D：&f" + ratio(career.kills, career.deaths)));
+                lore.add(color("&7场次：&f" + career.matches + " &7胜场：&f" + career.wins
+                        + " &7胜率：&f" + percent(career.wins, career.matches)));
+                lore.add(color("&7下包：&f" + career.plants + " &7拆包：&f" + career.defuses));
+            }
             meta.setLore(lore);
             head.setItemMeta(meta);
         }
@@ -366,6 +401,11 @@ public class MenuModule implements AddonModule, Listener {
     private String ratio(int kills, int deaths) {
         if (deaths <= 0) return kills == 0 ? "0.00" : String.valueOf(kills);
         return String.format("%.2f", kills / (double) deaths);
+    }
+
+    private String percent(int wins, int matches) {
+        if (matches <= 0) return "0%";
+        return Math.round(wins * 100.0 / matches) + "%";
     }
 
     // ------------------------------------------------------------------
@@ -540,9 +580,62 @@ public class MenuModule implements AddonModule, Listener {
 
     @EventHandler
     public void onMatchEnd(WbdMatchEndEvent event) {
-        String winner = event.getWinner() == null ? "无" : event.getWinner().name();
+        Team winner = event.getWinner();
+        String winnerName = winner == null ? "无" : winner.name();
         lastResults.put(event.getArenaId(),
-                new LastResult(winner, event.getTScore(), event.getCtScore()));
+                new LastResult(winnerName, event.getTScore(), event.getCtScore()));
+        saveResults();
+
+        ArenaSession session = session(event.getArenaId());
+        if (session != null) {
+            Set<UUID> done = counted.computeIfAbsent(
+                    event.getArenaId(), k -> ConcurrentHashMap.newKeySet());
+            for (PlayerRecord record : session.getPlayers()) {
+                if (!done.add(record.getUuid())) continue;
+                addStats(record, true, winner);
+            }
+            saveStats();
+        }
+    }
+
+    @EventHandler
+    public void onLeave(WbdPlayerLeaveArenaEvent event) {
+        Player player = event.getPlayer();
+        ArenaSession session = session(event.getArenaId());
+        if (session == null || player == null) return;
+
+        PlayerRecord record = session.getRecord(player);
+        if (record == null) return;
+
+        Set<UUID> done = counted.computeIfAbsent(
+                event.getArenaId(), k -> ConcurrentHashMap.newKeySet());
+        if (!done.add(player.getUniqueId())) return;
+
+        addStats(record, false, null);
+        saveStats();
+    }
+
+    @EventHandler
+    public void onRoundStart(WbdRoundStartEvent event) {
+        // 新比赛开始，清掉上一场的“已计入”标记
+        if (event.getRound() <= 1) {
+            counted.remove(event.getArenaId());
+        }
+    }
+
+    private void addStats(PlayerRecord record, boolean countMatch, Team winner) {
+        Stats s = stats.computeIfAbsent(record.getUuid(), k -> new Stats());
+        s.name = record.getName();
+        s.kills += record.getKills();
+        s.deaths += record.getDeaths();
+        s.plants += record.getPlants();
+        s.defuses += record.getDefuses();
+        if (countMatch) {
+            s.matches++;
+            if (winner != null && record.getTeam() == winner) {
+                s.wins++;
+            }
+        }
     }
 
     // ------------------------------------------------------------------
@@ -612,5 +705,94 @@ public class MenuModule implements AddonModule, Listener {
     }
 
     private record LastResult(String winner, int tScore, int ctScore) {
+    }
+
+    // ------------------------------------------------------------------
+    // 落盘：menu-results.yml / player-stats.yml
+    // ------------------------------------------------------------------
+
+    private void loadResults() {
+        lastResults.clear();
+        if (resultsFile == null || !resultsFile.isFile()) return;
+        YamlConfiguration yaml = YamlConfiguration.loadConfiguration(resultsFile);
+        ConfigurationSection section = yaml.getConfigurationSection("results");
+        if (section == null) return;
+        for (String id : section.getKeys(false)) {
+            lastResults.put(id, new LastResult(
+                    section.getString(id + ".winner", "无"),
+                    section.getInt(id + ".t-score"),
+                    section.getInt(id + ".ct-score")));
+        }
+    }
+
+    private void saveResults() {
+        if (resultsFile == null) return;
+        YamlConfiguration yaml = new YamlConfiguration();
+        for (Map.Entry<String, LastResult> entry : lastResults.entrySet()) {
+            String base = "results." + entry.getKey();
+            yaml.set(base + ".winner", entry.getValue().winner());
+            yaml.set(base + ".t-score", entry.getValue().tScore());
+            yaml.set(base + ".ct-score", entry.getValue().ctScore());
+        }
+        try {
+            yaml.save(resultsFile);
+        } catch (IOException e) {
+            plugin.getLogger().warning("保存 menu-results.yml 失败：" + e.getMessage());
+        }
+    }
+
+    private void loadStats() {
+        stats.clear();
+        if (statsFile == null || !statsFile.isFile()) return;
+        YamlConfiguration yaml = YamlConfiguration.loadConfiguration(statsFile);
+        ConfigurationSection section = yaml.getConfigurationSection("players");
+        if (section == null) return;
+        for (String key : section.getKeys(false)) {
+            try {
+                UUID id = UUID.fromString(key);
+                Stats s = new Stats();
+                s.name = section.getString(key + ".name", "");
+                s.kills = section.getInt(key + ".kills");
+                s.deaths = section.getInt(key + ".deaths");
+                s.plants = section.getInt(key + ".plants");
+                s.defuses = section.getInt(key + ".defuses");
+                s.matches = section.getInt(key + ".matches");
+                s.wins = section.getInt(key + ".wins");
+                stats.put(id, s);
+            } catch (IllegalArgumentException ignored) {
+                // 坏 UUID 跳过
+            }
+        }
+    }
+
+    private void saveStats() {
+        if (statsFile == null) return;
+        YamlConfiguration yaml = new YamlConfiguration();
+        for (Map.Entry<UUID, Stats> entry : stats.entrySet()) {
+            String base = "players." + entry.getKey();
+            Stats s = entry.getValue();
+            yaml.set(base + ".name", s.name);
+            yaml.set(base + ".kills", s.kills);
+            yaml.set(base + ".deaths", s.deaths);
+            yaml.set(base + ".plants", s.plants);
+            yaml.set(base + ".defuses", s.defuses);
+            yaml.set(base + ".matches", s.matches);
+            yaml.set(base + ".wins", s.wins);
+        }
+        try {
+            yaml.save(statsFile);
+        } catch (IOException e) {
+            plugin.getLogger().warning("保存 player-stats.yml 失败：" + e.getMessage());
+        }
+    }
+
+    private static final class Stats {
+        String name = "";
+        int kills;
+        int deaths;
+        int plants;
+        int defuses;
+        int matches;
+        int wins;
     }
 }
