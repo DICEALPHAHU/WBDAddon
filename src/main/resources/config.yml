@@ -292,6 +292,36 @@ modules:
   #       注意：原版队伍数据是跟着玩家「当前所用的那块计分板」下发的，
   #       因此如果有别的插件给玩家换了独立计分板，本模块的队伍就传不过去。
   # ----------------------------------------------------------
+  # ----------------------------------------------------------
+  # 技术暂停模块
+  # 功能：/wbdaddon pause 管理员暂停；/pause 玩家每队每场限次。
+  #       暂停时会停掉 WBD 的 tick，回合与 C4 倒计时一起冻结。
+  # ----------------------------------------------------------
+  technical-pause:
+    enabled: true
+
+    # 管理员暂停的默认时长 / 最长时长（秒）
+    admin-default-seconds: 60
+    admin-max-seconds: 300
+
+    # 每队每场可发起的暂停次数与时长（0 = 不开放玩家暂停）
+    team-count: 1
+    team-seconds: 60
+
+    # 是否连 WBD 的 tick 一起停（回合 / C4 倒计时冻结）。
+    # 反射失败时会自动退化为只冻结玩家。
+    freeze-timers: true
+
+    # 暂停期间是否冻结玩家（移动 / 伤害 / 交互）
+    freeze-players: true
+
+    # 提示文案。{team} 替换成「T 方 / CT 方 / 管理员」，{seconds} 替换成剩余秒数。
+    paused-title: "&e技术暂停"
+    paused-subtitle: "&7{team} 请求暂停，剩余 {seconds} 秒"
+    resumed-title: "&a比赛继续"
+
+    debug: false
+
   journeymap-bridge:
     enabled: true
 

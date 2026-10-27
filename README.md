@@ -20,6 +20,7 @@ WarZBombDefuse 的第三方附加组件合集 —— 击杀报告 / 单人伤害
 | 队伍护甲 | `team-armor` | T / CT 穿固定颜色的染色皮革甲，护甲值已抵消为 0；默认只填空槽，不顶掉玩家自己的护甲 |
 | 回合事件 | `round-events` | 回合结束清理竞技场掉落物；回合开始时提示「上半场最终局」与「赛点」 |
 | 药水效果清理 | `arena-effects` | 进场与每回合开始时清空药水效果，防止带抗性/速度/力量进场 |
+| 技术暂停 | `technical-pause` | `/wbdaddon pause` 管理员暂停、`/pause` 玩家每队限次；暂停时冻结回合与 C4 倒计时及玩家操作 |
 | JourneyMap 桥接 | `journeymap-bridge` | 同步 WBD 队伍数据到原版 Team，配合 JourneyMap Teams 队友可见、敌军隐藏、观战消失 |
 | 模式接入 API | — | 通过 `WbdAddonApi` 让第三方模式复用上面这些能力，不必各写一份 |
 
@@ -126,6 +127,16 @@ modules:
     ct-color: BLUE                  # CT 方染色
     zero-protection: true           # 抵消皮革甲自带的 7 点护甲
     overwrite-existing: false       # false=只填空槽，不顶掉玩家自己的护甲
+  technical-pause:
+    enabled: true
+    admin-default-seconds: 60      # 管理员暂停默认时长
+    admin-max-seconds: 300         # 管理员暂停上限
+    team-count: 1                  # 每队每场可发起次数
+    team-seconds: 60               # 玩家暂停时长
+    freeze-timers: true            # 连 WBD 的回合/C4 倒计时一起冻结
+    freeze-players: true           # 冻结玩家移动/伤害/交互
+    paused-title: "&e技术暂停"
+    resumed-title: "&a比赛继续"
   round-events:
     enabled: true
     clear-drops-on-round-start: true # 新回合开始时清理上一回合的掉落物

@@ -1,6 +1,7 @@
 package alphahu.wbdaddon;
 
 import alphahu.wbdaddon.api.WbdAddonApi;
+import alphahu.wbdaddon.command.PauseCommand;
 import alphahu.wbdaddon.command.WBDAddonCommand;
 import alphahu.wbdaddon.mode.ModeRegistry;
 import alphahu.wbdaddon.module.ArenaDropsModule;
@@ -13,6 +14,7 @@ import alphahu.wbdaddon.module.MatchStatusModule;
 import alphahu.wbdaddon.module.ModuleManager;
 import alphahu.wbdaddon.module.RoundEventsModule;
 import alphahu.wbdaddon.module.TeamArmorModule;
+import alphahu.wbdaddon.module.TechnicalPauseModule;
 import com.warz.bombdefuse.WarZBombDefusePlugin;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
@@ -127,6 +129,7 @@ public final class WBDAddon extends JavaPlugin {
         moduleManager.register(new ArenaDropsModule(this));
         moduleManager.register(new TeamArmorModule(this));
         moduleManager.register(new RoundEventsModule(this));
+        moduleManager.register(new TechnicalPauseModule(this));
         moduleManager.register(new JourneyMapModule(this));
 
         // 5. 启用所有模块
@@ -147,6 +150,12 @@ public final class WBDAddon extends JavaPlugin {
         if (cmd != null) {
             cmd.setExecutor(command);
             cmd.setTabCompleter(command);
+        }
+
+        // 玩家暂停入口 /pause（每队每场限次，权限在模块内判定）
+        var pauseCmd = getCommand("pause");
+        if (pauseCmd != null) {
+            pauseCmd.setExecutor(new PauseCommand(this));
         }
 
         getLogger().info("WBDAddon 已加载，共启用 " + moduleManager.getEnabledModules().size() + " 个模块，"

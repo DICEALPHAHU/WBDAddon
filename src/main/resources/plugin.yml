@@ -24,6 +24,10 @@ commands:
     aliases: [wbdaddon, wbdreport]
     usage: /wbdaddon help
     permission: wbdaddon.use
+  pause:
+    description: 请求技术暂停（每队每场限次）
+    usage: /pause
+    aliases: [timeout]
 
 permissions:
   wbdaddon.use:

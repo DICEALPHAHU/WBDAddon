@@ -4,6 +4,7 @@ import alphahu.wbdaddon.WBDAddon;
 import alphahu.wbdaddon.api.AddonMode;
 import alphahu.wbdaddon.module.AddonModule;
 import alphahu.wbdaddon.module.BombDefuseSoundModule;
+import alphahu.wbdaddon.module.TechnicalPauseModule;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.command.Command;
@@ -38,7 +39,7 @@ public class WBDAddonCommand implements CommandExecutor, TabCompleter {
     private final WBDAddon plugin;
 
     private static final List<String> SUB_COMMANDS =
-            Arrays.asList("help", "reload", "modules", "modes", "sound");
+            Arrays.asList("help", "reload", "modules", "modes", "sound", "pause", "resume");
 
     public WBDAddonCommand(WBDAddon plugin) {
         this.plugin = plugin;
@@ -89,6 +90,34 @@ public class WBDAddonCommand implements CommandExecutor, TabCompleter {
 
             case "sound" -> playSoundPreview(sender, args);
 
+            case "pause" -> {
+                if (!sender.hasPermission("wbdaddon.admin")) {
+                    sender.sendMessage(color("&c你没有权限执行此命令。"));
+                    return true;
+                }
+                TechnicalPauseModule module = pauseModule();
+                if (module == null) {
+                    sender.sendMessage(color("&c技术暂停模块未启用。"));
+                    return true;
+                }
+                module.requestAdminPause(sender,
+                        args.length >= 2 ? args[1] : null,
+                        args.length >= 3 ? parseSeconds(sender, args[2]) : null);
+            }
+
+            case "resume" -> {
+                if (!sender.hasPermission("wbdaddon.admin")) {
+                    sender.sendMessage(color("&c你没有权限执行此命令。"));
+                    return true;
+                }
+                TechnicalPauseModule module = pauseModule();
+                if (module == null) {
+                    sender.sendMessage(color("&c技术暂停模块未启用。"));
+                    return true;
+                }
+                module.requestAdminResume(sender, args.length >= 2 ? args[1] : null);
+            }
+
             default -> sender.sendMessage(color("&c未知子命令。使用 /wbdaddon help 查看帮助。"));
         }
 
@@ -102,7 +131,28 @@ public class WBDAddonCommand implements CommandExecutor, TabCompleter {
         sender.sendMessage(color("&e/wbdaddon modules &7- 查看模块状态"));
         sender.sendMessage(color("&e/wbdaddon modes &7- 查看已接入的游戏模式"));
         sender.sendMessage(color("&e/wbdaddon sound &7- 试听拆弹提示音效"));
+        sender.sendMessage(color("&e/wbdaddon pause [竞技场] [秒数] &7- 技术暂停（管理员）"));
+        sender.sendMessage(color("&e/wbdaddon resume [竞技场] &7- 恢复比赛（管理员）"));
+        sender.sendMessage(color("&e/pause &7- 玩家请求技术暂停（每队每场限次）"));
         sender.sendMessage(color("&6=========================="));
+    }
+
+    private TechnicalPauseModule pauseModule() {
+        AddonModule module = plugin.getModuleManager().getModule("technical-pause");
+        if (module instanceof TechnicalPauseModule pause
+                && plugin.getModuleManager().isEnabled(module)) {
+            return pause;
+        }
+        return null;
+    }
+
+    private Integer parseSeconds(CommandSender sender, String raw) {
+        try {
+            return Integer.parseInt(raw);
+        } catch (NumberFormatException e) {
+            sender.sendMessage(color("&c秒数必须是数字。"));
+            return null;
+        }
     }
 
     /**
