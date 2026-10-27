@@ -183,6 +183,11 @@ public class RoundSummaryModule implements AddonModule, Listener {
             }
         }
 
+        if (victim != null) {
+            state.deathWeapon.put(victim.getUniqueId(), WeaponNames.resolve(
+                    victim, plugin.getTacZApi(), plugin.isTacZAvailable()));
+        }
+
         if (victim != null && killer != null) {
             Cause cause = state.lastCause.remove(victim.getUniqueId());
             String weapon;
@@ -562,6 +567,22 @@ public class RoundSummaryModule implements AddonModule, Listener {
             }
         }
 
+        // 恶搞：开了枪但一个人没打中，还死了
+        for (PlayerRecord record : players) {
+            int deaths = state.roundDeaths.getOrDefault(record.getUuid(), 0);
+            Counter counter = state.counters.get(record.getUuid());
+            int playerShots = counter == null ? 0 : counter.shots;
+            int playerHits = counter == null ? 0 : counter.hits;
+            if (deaths > 0 && playerShots > 0 && playerHits == 0) {
+                String weapon = state.deathWeapon.getOrDefault(record.getUuid(), "枪");
+                int spend = state.spend.getOrDefault(record.getUuid(), 0);
+                facts.add(record.getName() + " 本回合拿着"
+                        + (spend > 0 ? "价值 " + spend + " 元的 " : "") + weapon
+                        + " 观察对面跑步姿势");
+                break;
+            }
+        }
+
         // 1vN
         if (state.clutcher != null) {
             boolean survived = state.clutcherTeam == event.getWinner();
@@ -670,6 +691,7 @@ public class RoundSummaryModule implements AddonModule, Listener {
         int clutchEnemies;
         Team clutcherTeam;
         final Map<UUID, Cause> lastCause = new ConcurrentHashMap<>();
+        final Map<UUID, String> deathWeapon = new ConcurrentHashMap<>();
         final List<String> killStories = new ArrayList<>();
         int roundDeathsTotal;
         int roundPlants;
@@ -702,6 +724,7 @@ public class RoundSummaryModule implements AddonModule, Listener {
             clutchEnemies = 0;
             clutcherTeam = null;
             lastCause.clear();
+            deathWeapon.clear();
             killStories.clear();
             roundDeathsTotal = 0;
             roundPlants = 0;
