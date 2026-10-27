@@ -30,6 +30,9 @@ import org.bukkit.inventory.meta.SkullMeta;
 
 import java.io.File;
 import java.io.IOException;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.LinkedHashMap;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -65,6 +68,10 @@ public class MenuModule implements AddonModule, Listener {
     /** 各竞技场最近一场比赛的结果。 */
     private final Map<String, LastResult> lastResults = new ConcurrentHashMap<>();
 
+    /** 最近的比赛记录（含每名玩家的 K/D）。 */
+    private final java.util.List<MatchRecord> history = new java.util.ArrayList<>();
+    private int historySize;
+
     /** 玩家生涯统计（跨比赛累计）。 */
     private final Map<UUID, Stats> stats = new ConcurrentHashMap<>();
 
@@ -97,6 +104,8 @@ public class MenuModule implements AddonModule, Listener {
     public void onEnable() {
         this.resultsFile = new File(plugin.getDataFolder(), "menu-results.yml");
         this.statsFile = new File(plugin.getDataFolder(), "player-stats.yml");
+        this.historySize = Math.max(1,
+                plugin.getConfig().getInt("modules.menu.history-size", 30));
         loadResults();
         loadStats();
 
@@ -217,6 +226,14 @@ public class MenuModule implements AddonModule, Listener {
             case SUMMARY -> {
                 if (slot == 49) {
                     open(player, Screen.MAIN, null, null);
+                } else if (slot < 45 && slot < history.size()) {
+                    MatchRecord record = history.get(slot);
+                    open(player, Screen.MATCH, record.arenaId(), record.arenaId(), record.time());
+                }
+            }
+            case MATCH -> {
+                if (slot == 49) {
+                    open(player, Screen.SUMMARY, null, null);
                 }
             }
             case PROFILE -> {
@@ -232,7 +249,11 @@ public class MenuModule implements AddonModule, Listener {
     // ------------------------------------------------------------------
 
     private void open(Player player, Screen screen, String modeId, String arenaId) {
-        MenuHolder holder = new MenuHolder(screen, modeId, arenaId);
+        open(player, screen, modeId, arenaId, 0L);
+    }
+
+    private void open(Player player, Screen screen, String modeId, String arenaId, long matchTime) {
+        MenuHolder holder = new MenuHolder(screen, modeId, arenaId, matchTime);
         Inventory inventory = Bukkit.createInventory(holder, size(screen),
                 color(title(screen, modeId)));
         holder.inventory = inventory;
@@ -241,8 +262,8 @@ public class MenuModule implements AddonModule, Listener {
     }
 
     private int size(Screen screen) {
-        return screen == Screen.ROOMS || screen == Screen.ACTIVE || screen == Screen.SUMMARY
-                ? 54 : 27;
+        return screen == Screen.ROOMS || screen == Screen.ACTIVE
+                || screen == Screen.SUMMARY || screen == Screen.MATCH ? 54 : 27;
     }
 
     private String title(Screen screen, String modeId) {
@@ -255,6 +276,7 @@ public class MenuModule implements AddonModule, Listener {
             case ACTIVE -> "&8当前比赛 - " + modeName(modeId);
             case TEAM -> "&8选择阵营";
             case SUMMARY -> "&8比赛总结";
+            case MATCH -> "&8比赛详情";
             case PROFILE -> "&8个人资料";
         };
     }
@@ -327,24 +349,76 @@ public class MenuModule implements AddonModule, Listener {
                 inventory.setItem(22, item(Material.ARROW, "&7返回"));
             }
             case SUMMARY -> {
-                List<ArenaSession> sessions = sessions();
-                for (int i = 0; i < sessions.size() && i < 45; i++) {
-                    ArenaSession session = sessions.get(i);
-                    String id = session.getConfig().getId();
-                    LastResult result = lastResults.get(id);
-                    if (result == null) {
-                        inventory.setItem(i, item(Material.BOOK, "&e" + id,
-                                "&7最近比赛：&f暂无记录"));
-                    } else {
-                        inventory.setItem(i, item(Material.BOOK, "&e" + id,
-                                "&7胜者：&f" + result.winner,
-                                "&7比分：&cT " + result.tScore + " &7: &9CT " + result.ctScore));
-                    }
+                for (int i = 0; i < history.size() && i < 45; i++) {
+                    MatchRecord record = history.get(i);
+                    inventory.setItem(i, item(Material.BOOK,
+                            "&e" + record.arenaId() + " &7| &f" + record.winner(),
+                            "&7比分：&cT " + record.tScore() + " &7: &9CT " + record.ctScore(),
+                            "&7时间：&f" + time(record.time()),
+                            "&7玩家：&f" + record.players().size() + " 人",
+                            "&a点击查看详情"));
+                }
+                if (history.isEmpty()) {
+                    inventory.setItem(22, item(Material.PAPER, "&7暂无比赛记录"));
                 }
                 inventory.setItem(49, item(Material.ARROW, "&7返回"));
             }
+            case MATCH -> renderMatch(inventory, holder);
             case PROFILE -> renderProfile(inventory, player);
         }
+    }
+
+    private void renderMatch(Inventory inventory, MenuHolder holder) {
+        MatchRecord record = findMatch(holder);
+        if (record == null) {
+            inventory.setItem(22, item(Material.PAPER, "&7记录不存在"));
+            inventory.setItem(49, item(Material.ARROW, "&7返回"));
+            return;
+        }
+        inventory.setItem(4, item(Material.WRITTEN_BOOK,
+                "&e" + record.arenaId() + " &7| &f" + record.winner(),
+                "&7比分：&cT " + record.tScore() + " &7: &9CT " + record.ctScore(),
+                "&7时间：&f" + time(record.time()),
+                "&7玩家：&f" + record.players().size() + " 人"));
+        int slot = 9;
+        for (Line line : record.players()) {
+            if (slot > 44) break;
+            inventory.setItem(slot++, playerLine(line));
+        }
+        inventory.setItem(49, item(Material.ARROW, "&7返回"));
+    }
+
+    private MatchRecord findMatch(MenuHolder holder) {
+        for (MatchRecord record : history) {
+            if (record.time() == holder.matchTime
+                    && record.arenaId().equals(holder.arenaId)) {
+                return record;
+            }
+        }
+        return null;
+    }
+
+    private ItemStack playerLine(Line line) {
+        ItemStack head = new ItemStack(Material.PLAYER_HEAD);
+        ItemMeta meta = head.getItemMeta();
+        if (meta instanceof SkullMeta skull) {
+            skull.setOwningPlayer(Bukkit.getOfflinePlayer(line.name()));
+        }
+        if (meta != null) {
+            String teamColor = "T".equals(line.team()) ? "&c" : "&9";
+            meta.setDisplayName(color(teamColor + line.name()));
+            meta.setLore(java.util.List.of(
+                    color("&7阵营：&f" + line.team()),
+                    color("&7击杀：&c" + line.kills() + " &7死亡：&f" + line.deaths()
+                            + " &7K/D：&f" + ratio(line.kills(), line.deaths())),
+                    color("&7下包：&f" + line.plants() + " &7拆包：&f" + line.defuses())));
+        }
+        head.setItemMeta(meta);
+        return head;
+    }
+
+    private String time(long millis) {
+        return new SimpleDateFormat("MM-dd HH:mm").format(new Date(millis));
     }
 
     private void renderProfile(Inventory inventory, Player player) {
@@ -595,6 +669,20 @@ public class MenuModule implements AddonModule, Listener {
                 addStats(record, true, winner);
             }
             saveStats();
+
+            java.util.List<Line> lines = new java.util.ArrayList<>();
+            for (PlayerRecord record : session.getPlayers()) {
+                lines.add(new Line(record.getName(),
+                        record.getTeam() == null ? "?" : record.getTeam().name(),
+                        record.getKills(), record.getDeaths(),
+                        record.getPlants(), record.getDefuses()));
+            }
+            history.add(0, new MatchRecord(event.getArenaId(), winnerName,
+                    event.getTScore(), event.getCtScore(), System.currentTimeMillis(), lines));
+            while (history.size() > historySize) {
+                history.remove(history.size() - 1);
+            }
+            saveResults();
         }
     }
 
@@ -683,19 +771,25 @@ public class MenuModule implements AddonModule, Listener {
     }
 
     public enum Screen {
-        MAIN, MODES, MODE, MATCHING, ROOMS, ACTIVE, TEAM, SUMMARY, PROFILE
+        MAIN, MODES, MODE, MATCHING, ROOMS, ACTIVE, TEAM, SUMMARY, MATCH, PROFILE
     }
 
     public static final class MenuHolder implements InventoryHolder {
         final Screen screen;
         final String modeId;
         final String arenaId;
+        final long matchTime;
         Inventory inventory;
 
         MenuHolder(Screen screen, String modeId, String arenaId) {
+            this(screen, modeId, arenaId, 0L);
+        }
+
+        MenuHolder(Screen screen, String modeId, String arenaId, long matchTime) {
             this.screen = screen;
             this.modeId = modeId;
             this.arenaId = arenaId;
+            this.matchTime = matchTime;
         }
 
         @Override
@@ -705,6 +799,14 @@ public class MenuModule implements AddonModule, Listener {
     }
 
     private record LastResult(String winner, int tScore, int ctScore) {
+    }
+
+    private record Line(String name, String team, int kills, int deaths,
+                        int plants, int defuses) {
+    }
+
+    private record MatchRecord(String arenaId, String winner, int tScore, int ctScore,
+                               long time, java.util.List<Line> players) {
     }
 
     // ------------------------------------------------------------------
@@ -723,6 +825,32 @@ public class MenuModule implements AddonModule, Listener {
                     section.getInt(id + ".t-score"),
                     section.getInt(id + ".ct-score")));
         }
+
+        for (Map<?, ?> raw : yaml.getMapList("history")) {
+            java.util.List<Line> lines = new java.util.ArrayList<>();
+            Object playersRaw = raw.get("players");
+            if (playersRaw instanceof java.util.List<?> list) {
+                for (Object o : list) {
+                    if (!(o instanceof Map<?, ?> pm)) continue;
+                    lines.add(new Line(String.valueOf(pm.get("name")),
+                            String.valueOf(pm.get("team")),
+                            number(pm.get("kills")), number(pm.get("deaths")),
+                            number(pm.get("plants")), number(pm.get("defuses"))));
+                }
+            }
+            history.add(new MatchRecord(String.valueOf(raw.get("arena")),
+                    String.valueOf(raw.get("winner")),
+                    number(raw.get("t-score")), number(raw.get("ct-score")),
+                    numberLong(raw.get("time")), lines));
+        }
+    }
+
+    private int number(Object o) {
+        return o instanceof Number n ? n.intValue() : 0;
+    }
+
+    private long numberLong(Object o) {
+        return o instanceof Number n ? n.longValue() : 0L;
     }
 
     private void saveResults() {
@@ -734,6 +862,31 @@ public class MenuModule implements AddonModule, Listener {
             yaml.set(base + ".t-score", entry.getValue().tScore());
             yaml.set(base + ".ct-score", entry.getValue().ctScore());
         }
+
+        java.util.List<Map<String, Object>> out = new java.util.ArrayList<>();
+        for (MatchRecord record : history) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("arena", record.arenaId());
+            m.put("winner", record.winner());
+            m.put("t-score", record.tScore());
+            m.put("ct-score", record.ctScore());
+            m.put("time", record.time());
+            java.util.List<Map<String, Object>> pl = new java.util.ArrayList<>();
+            for (Line line : record.players()) {
+                Map<String, Object> pm = new LinkedHashMap<>();
+                pm.put("name", line.name());
+                pm.put("team", line.team());
+                pm.put("kills", line.kills());
+                pm.put("deaths", line.deaths());
+                pm.put("plants", line.plants());
+                pm.put("defuses", line.defuses());
+                pl.add(pm);
+            }
+            m.put("players", pl);
+            out.add(m);
+        }
+        yaml.set("history", out);
+
         try {
             yaml.save(resultsFile);
         } catch (IOException e) {

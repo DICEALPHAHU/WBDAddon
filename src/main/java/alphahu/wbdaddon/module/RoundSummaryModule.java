@@ -185,6 +185,7 @@ public class RoundSummaryModule implements AddonModule, Listener {
         if (state == null) return;
         state.roundPlants++;
         state.planter = event.getPlayer() == null ? null : event.getPlayer().getName();
+        state.planterId = event.getPlayer() == null ? null : event.getPlayer().getUniqueId();
         state.plantSite = event.getSiteId();
         state.plantAt = System.currentTimeMillis();
     }
@@ -195,6 +196,7 @@ public class RoundSummaryModule implements AddonModule, Listener {
         if (state == null) return;
         state.roundDefuses++;
         state.defuser = event.getPlayer() == null ? null : event.getPlayer().getName();
+        state.defuserId = event.getPlayer() == null ? null : event.getPlayer().getUniqueId();
         state.defuseAt = System.currentTimeMillis();
     }
 
@@ -220,8 +222,8 @@ public class RoundSummaryModule implements AddonModule, Listener {
         int firstKillSeconds = state.firstKillAt < 0 ? -1
                 : (int) Math.max(0, (state.firstKillAt - state.roundStart) / 1000);
 
-        // 整场比赛 MVP（CS 式：击杀 + 下包/拆包加权，平手比死亡少）
-        PlayerRecord mvp = matchMvp(session);
+        // 本回合 MVP（CS 式：击杀×2 + 伤害/100 + 下包/拆包各 +3，平手比死亡少）
+        PlayerRecord mvp = roundMvp(session, state, event.getWinner());
 
         String title = winnerName(event.getWinner());
         String subtitle = "&eMVP: &f" + (mvp == null ? "无" : mvp.getName());
@@ -235,21 +237,50 @@ public class RoundSummaryModule implements AddonModule, Listener {
         }
     }
 
-    /** 整场 MVP。 */
-    private PlayerRecord matchMvp(ArenaSession session) {
+    /** 本回合 MVP：只在胜方里选，没人的话退回全体。 */
+    private PlayerRecord roundMvp(ArenaSession session, ArenaState state, Team winner) {
         PlayerRecord best = null;
         double bestScore = -1;
+        int bestDeaths = Integer.MAX_VALUE;
+
         for (PlayerRecord record : session.getPlayers()) {
-            double score = record.getKills() * 2.0
-                    + record.getPlants() * 3.0
-                    + record.getDefuses() * 3.0;
+            if (winner != null && record.getTeam() != winner) continue;
+            double score = roundScore(state, record);
+            int deaths = state.roundDeaths.getOrDefault(record.getUuid(), 0);
             if (best == null || score > bestScore
-                    || (score == bestScore && record.getDeaths() < best.getDeaths())) {
+                    || (score == bestScore && deaths < bestDeaths)) {
                 best = record;
                 bestScore = score;
+                bestDeaths = deaths;
+            }
+        }
+
+        if (best != null && bestScore > 0) return best;
+
+        // 胜方没有有效数据时，退回全体里分数最高的
+        best = null;
+        bestScore = -1;
+        bestDeaths = Integer.MAX_VALUE;
+        for (PlayerRecord record : session.getPlayers()) {
+            double score = roundScore(state, record);
+            int deaths = state.roundDeaths.getOrDefault(record.getUuid(), 0);
+            if (best == null || score > bestScore
+                    || (score == bestScore && deaths < bestDeaths)) {
+                best = record;
+                bestScore = score;
+                bestDeaths = deaths;
             }
         }
         return best;
+    }
+
+    private double roundScore(ArenaState state, PlayerRecord record) {
+        int kills = state.roundKills.getOrDefault(record.getUuid(), 0);
+        int damage = state.damage.getOrDefault(record.getUuid(), 0);
+        double score = kills * 2.0 + damage / 100.0;
+        if (record.getUuid().equals(state.planterId)) score += 3.0;
+        if (record.getUuid().equals(state.defuserId)) score += 3.0;
+        return score;
     }
 
     /** 只取本回合的数据。 */
@@ -518,9 +549,11 @@ public class RoundSummaryModule implements AddonModule, Listener {
         String firstVictim;
         long lastKillAt;
         String planter;
+        UUID planterId;
         String plantSite;
         long plantAt;
         String defuser;
+        UUID defuserId;
         long defuseAt;
         int totalDamage;
         final Map<UUID, Integer> damage = new ConcurrentHashMap<>();
@@ -540,9 +573,11 @@ public class RoundSummaryModule implements AddonModule, Listener {
             firstVictim = null;
             lastKillAt = 0;
             planter = null;
+            planterId = null;
             plantSite = null;
             plantAt = 0;
             defuser = null;
+            defuserId = null;
             defuseAt = 0;
             totalDamage = 0;
             damage.clear();
