@@ -304,7 +304,8 @@ modules:
     admin-default-seconds: 60
     admin-max-seconds: 300
 
-    # 每队每场可发起的暂停次数与时长（0 = 不开放玩家暂停）
+    # 每队每场可发起的暂停次数与时长（0 = 不开放玩家暂停）。
+    # 玩家 /pause 只是预约：当前回合继续打完，下一回合开始才真正暂停。
     team-count: 1
     team-seconds: 60
 
@@ -316,6 +317,7 @@ modules:
     freeze-players: true
 
     # 提示文案。{team} 替换成「T 方 / CT 方 / 管理员」，{seconds} 替换成剩余秒数。
+    # paused-title 同时是顶部 BossBar 的标题前缀（显示为「技术暂停 00:59」）。
     paused-title: "&e技术暂停"
     paused-subtitle: "&7{team} 请求暂停，剩余 {seconds} 秒"
     resumed-title: "&a比赛继续"

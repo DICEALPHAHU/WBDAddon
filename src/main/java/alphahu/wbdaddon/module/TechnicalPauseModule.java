@@ -10,11 +10,12 @@ import com.warz.bombdefuse.api.WbdRoundStartEvent;
 import com.warz.bombdefuse.arena.ArenaSession;
 import com.warz.bombdefuse.model.GameState;
 import com.warz.bombdefuse.scheduler.TaskHandle;
-import net.md_5.bungee.api.ChatMessageType;
-import net.md_5.bungee.api.chat.TextComponent;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.Location;
+import org.bukkit.boss.BarColor;
+import org.bukkit.boss.BarStyle;
+import org.bukkit.boss.BossBar;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
@@ -41,29 +42,27 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * 技术暂停（类似 CS 的 tactical timeout）。
  *
+ * <h2>CS 式时机</h2>
+ *
+ * <p>玩家 {@code /pause} 之后，<b>当前回合继续打完</b>；请求会被记下来，
+ * 等下一回合开始的 {@link WbdRoundStartEvent} 才真正暂停。
+ * 这样不会把正在交火的回合拦腰打断，也符合「一方叫了暂停，下一回合开局停」的习惯。
+ *
+ * <p>管理员 {@code /wbdaddon pause} 是即时暂停，用于处理突发技术问题；
+ * 两者用的是同一套 BossBar 倒计时与恢复逻辑。
+ *
  * <h2>能真正做到「停表」</h2>
  *
- * <p>WarZBombDefuse 的回合、冻结倒计时、C4 倒计时都由 {@code ArenaSession.tickTask}
- * 这一个每秒 20 次的 tick 推进。暂停时通过反射拿到该字段并 {@code cancel()}，
- * 恢复时调用公开的 {@code startTasks()} 重建 —— 计时器会从暂停时的值继续，
- * 而不是带着暂停期间的时间继续往前跑。
+ * <p>WBD 的回合、冻结倒计时、C4 倒计时都由 {@code ArenaSession.tickTask} 推进。
+ * 暂停时反射拿到该字段并 {@code cancel()}，恢复时调用公开的 {@code startTasks()}，
+ * 计时器会从暂停时的值继续。反射失败时退化为只冻结玩家，并打警告。
  *
- * <p>如果反射失败（WBD 改字段名），会退化成「只冻结玩家、计时器继续走」，
- * 并在控制台打一条警告，不会因此把整局卡死。
- *
- * <h2>暂停期间</h2>
+ * <h2>显示</h2>
  *
  * <ul>
- *   <li>参赛玩家不能移动（允许转视角）</li>
- *   <li>不结算伤害、不能丢物品、不能交互/破坏/放置</li>
- *   <li>ActionBar 显示剩余秒数，时间到自动恢复</li>
- * </ul>
- *
- * <h2>两种发起方式</h2>
- *
- * <ul>
- *   <li>管理员：{@code /wbdaddon pause [竞技场] [秒数]}，不限次数</li>
- *   <li>玩家：{@code /pause}，每队每场限 {@code team-count} 次</li>
+ *   <li>顶部 BossBar：{@code 技术暂停 00:59}</li>
+ *   <li>聊天栏：请求时「T 方 / CT 方 发起了技术暂停」</li>
+ *   <li>暂停期间玩家不能移动（允许转视角）、不结算伤害、不能交互/破坏/放置</li>
  * </ul>
  *
  * @author AlphaHu
@@ -72,8 +71,11 @@ public class TechnicalPauseModule implements AddonModule, Listener {
 
     private final WBDAddon plugin;
 
-    /** 按竞技场 ID 记录当前暂停；一个竞技场同时只允许一个暂停。 */
+    /** 当前正在进行的暂停，key = 竞技场 ID。 */
     private final Map<String, Pause> pauses = new ConcurrentHashMap<>();
+
+    /** 已请求、等待下一回合开始的暂停。 */
+    private final Map<String, Pending> pending = new ConcurrentHashMap<>();
 
     /** 每队已用掉的玩家暂停次数，key = arenaId + "|" + teamId。 */
     private final Map<String, Integer> teamUses = new ConcurrentHashMap<>();
@@ -146,6 +148,7 @@ public class TechnicalPauseModule implements AddonModule, Listener {
             resume(arenaId, "插件卸载");
         }
         pauses.clear();
+        pending.clear();
         teamUses.clear();
         HandlerList.unregisterAll(this);
         plugin.getLogger().info("技术暂停已卸载。");
@@ -155,7 +158,7 @@ public class TechnicalPauseModule implements AddonModule, Listener {
     // 对外入口
     // ------------------------------------------------------------------
 
-    /** 玩家 /pause：每队每场一次。 */
+    /** 玩家 /pause：只预约，当前回合继续，下一回合开始才暂停。 */
     public void requestTeamPause(Player player) {
         if (teamCount <= 0) {
             player.sendMessage(color("&c本服没有开放玩家暂停。"));
@@ -180,6 +183,10 @@ public class TechnicalPauseModule implements AddonModule, Listener {
             player.sendMessage(color("&c当前已经处于技术暂停中。"));
             return;
         }
+        if (pending.containsKey(arenaId)) {
+            player.sendMessage(color("&c已经有一个待生效的技术暂停了。"));
+            return;
+        }
 
         ArenaSession session = session(arenaId);
         if (session == null) {
@@ -201,16 +208,15 @@ public class TechnicalPauseModule implements AddonModule, Listener {
         teamUses.put(key, used + 1);
 
         String label = "T".equals(teamId) ? "T 方" : "CT 方";
-        if (!pause(arenaId, session, teamId, teamSeconds, label)) {
-            teamUses.put(key, used);
-            player.sendMessage(color("&c暂停失败。"));
-            return;
-        }
-        player.sendMessage(color("&a已请求技术暂停，本队剩余 "
+        pending.put(arenaId, new Pending(teamId, teamSeconds, label));
+
+        broadcast(arenaId, "&e[技术暂停] &f" + label + " 发起了技术暂停"
+                + "&7（下一回合开始时生效）");
+        player.sendMessage(color("&a已预约技术暂停，本队剩余 "
                 + (teamCount - used - 1) + " 次。"));
     }
 
-    /** 管理员 /wbdaddon pause [竞技场] [秒数]。 */
+    /** 管理员 /wbdaddon pause [竞技场] [秒数]：即时暂停。 */
     public void requestAdminPause(CommandSender sender, String arenaId, Integer seconds) {
         if (arenaId == null) {
             if (!(sender instanceof Player player) || plugin.getApi() == null) {
@@ -237,14 +243,14 @@ public class TechnicalPauseModule implements AddonModule, Listener {
 
         int secs = seconds == null ? adminDefaultSeconds : seconds;
         secs = Math.max(5, Math.min(adminMaxSeconds, secs));
-        if (!pause(arenaId, session, null, secs, "管理员")) {
+        if (!startPause(arenaId, session, null, secs, "管理员")) {
             sender.sendMessage(color("&c暂停失败。"));
             return;
         }
         sender.sendMessage(color("&a已暂停竞技场 &e" + arenaId + " &a，&e" + secs + " &a秒。"));
     }
 
-    /** 管理员 /wbdaddon resume [竞技场]。 */
+    /** 管理员 /wbdaddon resume [竞技场]：恢复，或取消尚未生效的预约。 */
     public void requestAdminResume(CommandSender sender, String arenaId) {
         if (arenaId == null) {
             if (!(sender instanceof Player player) || plugin.getApi() == null) {
@@ -257,6 +263,14 @@ public class TechnicalPauseModule implements AddonModule, Listener {
                 return;
             }
             arenaId = mode.getArenaId(player);
+        }
+
+        Pending cancelled = pending.remove(arenaId);
+        if (cancelled != null) {
+            refund(arenaId, cancelled.teamId);
+            broadcast(arenaId, "&e[技术暂停] &f已取消待生效的暂停。");
+            sender.sendMessage(color("&a已取消竞技场 &e" + arenaId + " &a的暂停预约。"));
+            return;
         }
 
         if (!resume(arenaId, "管理员恢复")) {
@@ -274,19 +288,28 @@ public class TechnicalPauseModule implements AddonModule, Listener {
     // 暂停 / 恢复
     // ------------------------------------------------------------------
 
-    private boolean pause(String arenaId, ArenaSession session, String teamId,
-                          int seconds, String label) {
+    private boolean startPause(String arenaId, ArenaSession session, String teamId,
+                               int seconds, String label) {
         boolean timersFrozen = freezeTimers && cancelTick(session);
 
-        Pause p = new Pause(session, arenaId, teamId,
+        Pause p = new Pause(session, arenaId, teamId, seconds,
                 System.currentTimeMillis() + seconds * 1000L, timersFrozen);
-        pauses.put(arenaId, p);
+        p.bar = Bukkit.createBossBar(color(pausedTitle) + " " + clock(seconds),
+                BarColor.RED, BarStyle.SOLID);
+        p.bar.setProgress(1.0);
 
+        pauses.put(arenaId, p);
         if (freezePlayers) {
             freezeArena(arenaId, p);
         }
+        for (Player player : Bukkit.getOnlinePlayers()) {
+            if (inArena(player, arenaId)) {
+                p.bar.addPlayer(player);
+            }
+        }
 
-        broadcast(arenaId, "&e[技术暂停] &f" + label + " 请求暂停，&e" + seconds + " &f秒。");
+        broadcast(arenaId, "&e[技术暂停] &f" + label + " 发起了技术暂停，"
+                + "&e" + seconds + " &f秒后继续。");
         for (Player player : Bukkit.getOnlinePlayers()) {
             if (!inArena(player, arenaId)) continue;
             player.sendTitle(color(pausedTitle),
@@ -310,6 +333,10 @@ public class TechnicalPauseModule implements AddonModule, Listener {
 
         if (p.ticker != null) {
             p.ticker.cancel();
+        }
+        if (p.bar != null) {
+            p.bar.setVisible(false);
+            p.bar.removeAll();
         }
         if (p.timersFrozen) {
             try {
@@ -335,14 +362,10 @@ public class TechnicalPauseModule implements AddonModule, Listener {
             return;
         }
         int seconds = (int) ((remaining + 999) / 1000);
-        String text = color(pausedSubtitle
-                .replace("{team}", teamLabel(p.teamId))
-                .replace("{seconds}", String.valueOf(seconds)));
-
-        for (UUID id : p.frozen) {
-            Player player = Bukkit.getPlayer(id);
-            if (player == null || !player.isOnline()) continue;
-            player.spigot().sendMessage(ChatMessageType.ACTION_BAR, new TextComponent(text));
+        if (p.bar != null) {
+            p.bar.setTitle(color(pausedTitle) + " " + clock(seconds));
+            p.bar.setProgress(Math.max(0.0,
+                    Math.min(1.0, remaining / (double) (p.totalSeconds * 1000L))));
         }
     }
 
@@ -372,7 +395,7 @@ public class TechnicalPauseModule implements AddonModule, Listener {
     }
 
     // ------------------------------------------------------------------
-    // 冻结
+    // 冻结 / 工具
     // ------------------------------------------------------------------
 
     private void freezeArena(String arenaId, Pause p) {
@@ -396,12 +419,20 @@ public class TechnicalPauseModule implements AddonModule, Listener {
     private void removeFrozen(Player player) {
         for (Pause p : pauses.values()) {
             p.frozen.remove(player.getUniqueId());
+            if (p.bar != null) {
+                p.bar.removePlayer(player);
+            }
         }
     }
 
-    private String teamLabel(String teamId) {
-        if (teamId == null) return "管理员";
-        return "T".equals(teamId) ? "T 方" : "CT 方";
+    private void refund(String arenaId, String teamId) {
+        if (teamId == null) return;
+        String key = arenaId + "|" + teamId;
+        teamUses.computeIfPresent(key, (k, v) -> v > 1 ? v - 1 : null);
+    }
+
+    private String clock(int seconds) {
+        return String.format("%02d:%02d", seconds / 60, seconds % 60);
     }
 
     // ------------------------------------------------------------------
@@ -461,7 +492,7 @@ public class TechnicalPauseModule implements AddonModule, Listener {
         }
     }
 
-    /** 暂停期间进场的人也要一起冻住。 */
+    /** 暂停期间进场的人也要一起冻住，并加进 BossBar。 */
     @EventHandler
     public void onJoin(WbdPlayerJoinArenaEvent event) {
         Pause p = pauses.get(event.getArenaId());
@@ -470,6 +501,9 @@ public class TechnicalPauseModule implements AddonModule, Listener {
             if (pauses.get(event.getArenaId()) == p
                     && inArena(event.getPlayer(), event.getArenaId())) {
                 p.frozen.add(event.getPlayer().getUniqueId());
+                if (p.bar != null) {
+                    p.bar.addPlayer(event.getPlayer());
+                }
             }
         });
     }
@@ -484,17 +518,29 @@ public class TechnicalPauseModule implements AddonModule, Listener {
         removeFrozen(event.getPlayer());
     }
 
-    /** 新比赛开始时重置每队暂停次数。 */
+    /** 回合开始：重置每队次数，并启动预约的暂停。 */
     @EventHandler
     public void onRoundStart(WbdRoundStartEvent event) {
         if (event.getRound() <= 1) {
             resetTeamUses(event.getArenaId());
         }
+
+        Pending pendingPause = pending.remove(event.getArenaId());
+        if (pendingPause == null) return;
+
+        ArenaSession session = session(event.getArenaId());
+        if (session == null) return;
+        startPause(event.getArenaId(), session, pendingPause.teamId,
+                pendingPause.seconds, pendingPause.label);
     }
 
     @EventHandler
     public void onMatchEnd(WbdMatchEndEvent event) {
         resetTeamUses(event.getArenaId());
+        Pending pendingPause = pending.remove(event.getArenaId());
+        if (pendingPause != null) {
+            refund(event.getArenaId(), pendingPause.teamId);
+        }
     }
 
     private void resetTeamUses(String arenaId) {
@@ -534,20 +580,35 @@ public class TechnicalPauseModule implements AddonModule, Listener {
         return ChatColor.translateAlternateColorCodes('&', s == null ? "" : s);
     }
 
+    private static final class Pending {
+        final String teamId;
+        final int seconds;
+        final String label;
+
+        Pending(String teamId, int seconds, String label) {
+            this.teamId = teamId;
+            this.seconds = seconds;
+            this.label = label;
+        }
+    }
+
     private static final class Pause {
         final ArenaSession session;
         final String arenaId;
         final String teamId;
+        final int totalSeconds;
         final long endMillis;
         final boolean timersFrozen;
         final Set<UUID> frozen = ConcurrentHashMap.newKeySet();
+        BossBar bar;
         BukkitTask ticker;
 
-        Pause(ArenaSession session, String arenaId, String teamId,
+        Pause(ArenaSession session, String arenaId, String teamId, int totalSeconds,
               long endMillis, boolean timersFrozen) {
             this.session = session;
             this.arenaId = arenaId;
             this.teamId = teamId;
+            this.totalSeconds = totalSeconds;
             this.endMillis = endMillis;
             this.timersFrozen = timersFrozen;
         }
