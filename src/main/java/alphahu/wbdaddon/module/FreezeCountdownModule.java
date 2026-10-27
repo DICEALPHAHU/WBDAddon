@@ -56,7 +56,7 @@ public class FreezeCountdownModule implements AddonModule, Listener {
     @Override
     public void onEnable() {
         this.seconds = Math.max(0, plugin.getConfig()
-                .getInt("modules.freeze-countdown.seconds", 3));
+                .getInt("modules.freeze-countdown.seconds", 4));
         this.volume = (float) plugin.getConfig()
                 .getDouble("modules.freeze-countdown.volume", 0.35);
         this.basePitch = (float) plugin.getConfig()
@@ -92,16 +92,20 @@ public class FreezeCountdownModule implements AddonModule, Listener {
                     .getInt("settings.freeze-seconds", 8) * 20);
         }
 
-        for (int i = 1; i <= seconds; i++) {
-            long delay = freezeTicks - i * 20L;
-            if (delay < 0) continue;
+        // 兜底：冻结时长不足时只取放得下的最后几秒。
+        // 例：配置 4 秒、冻结只有 2 秒 → 只播最后 2 声。
+        int playable = Math.min(seconds, freezeTicks / 20);
+        if (playable <= 0) return;
+
+        for (int i = 1; i <= playable; i++) {
+            long delay = Math.max(0L, freezeTicks - i * 20L);
 
             int index = i; // 1 = 最后一秒
             Bukkit.getScheduler().runTaskLater(plugin, () -> {
                 if (session.getState() != GameState.FREEZE) return;
 
-                // 越接近回合开始音调越高：3 秒最低，1 秒最高
-                float pitch = basePitch + (seconds - index) * pitchStep;
+                // 越接近回合开始音调越高：playable 秒前最低，最后一秒最高
+                float pitch = basePitch + (playable - index) * pitchStep;
                 for (Player player : Bukkit.getOnlinePlayers()) {
                     if (inArena(player, event.getArenaId())) {
                         player.playSound(player.getLocation(), sound, volume, pitch);

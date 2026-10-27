@@ -284,8 +284,8 @@ modules:
   freeze-countdown:
     enabled: true
 
-    # 从最后几秒开始
-    seconds: 3
+    # 从最后几秒开始（冻结时长不足时自动只取放得下的最后几秒）
+    seconds: 4
 
     # 音效名（Bukkit Sound 枚举）
     sound: BLOCK_NOTE_BLOCK_HAT
