@@ -33,7 +33,7 @@ public final class TacZStatsListener implements Listener {
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onHurt(TacZEntityHurtPreBridgeEvent event) {
         if (event.getAttacker() instanceof Player player) {
-            module.countHit(player, event.isHeadShot());
+            module.countHit(player, event.isHeadShot(), event.getBaseAmount());
         }
     }
 }

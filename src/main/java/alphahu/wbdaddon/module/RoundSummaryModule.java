@@ -120,12 +120,15 @@ public class RoundSummaryModule implements AddonModule, Listener {
         }
     }
 
-    void countHit(Player player, boolean headshot) {
+    void countHit(Player player, boolean headshot, float damage) {
         ArenaState state = stateFor(player);
         if (state == null) return;
         Counter c = state.counter(player.getUniqueId());
         c.hits++;
         if (headshot) c.headshots++;
+        int amount = Math.max(0, Math.round(damage));
+        state.totalDamage += amount;
+        state.damage.merge(player.getUniqueId(), amount, Integer::sum);
     }
 
     private ArenaState stateFor(Player player) {
@@ -146,7 +149,7 @@ public class RoundSummaryModule implements AddonModule, Listener {
     public void onRoundStart(WbdRoundStartEvent event) {
         ArenaState state = arenaStates.computeIfAbsent(
                 event.getArenaId(), k -> new ArenaState());
-        state.resetForRound(System.currentTimeMillis());
+        state.resetForRound(System.currentTimeMillis(), event.getRound());
     }
 
     @EventHandler
@@ -154,6 +157,7 @@ public class RoundSummaryModule implements AddonModule, Listener {
         ArenaState state = arenaStates.computeIfAbsent(
                 event.getArenaId(), k -> new ArenaState());
         state.roundDeathsTotal++;
+        state.lastKillAt = System.currentTimeMillis();
 
         Player killer = event.getKiller();
         Player victim = event.getVictim();
@@ -178,13 +182,20 @@ public class RoundSummaryModule implements AddonModule, Listener {
     @EventHandler
     public void onPlant(WbdBombPlantCompleteEvent event) {
         ArenaState state = arenaStates.get(event.getArenaId());
-        if (state != null) state.roundPlants++;
+        if (state == null) return;
+        state.roundPlants++;
+        state.planter = event.getPlayer() == null ? null : event.getPlayer().getName();
+        state.plantSite = event.getSiteId();
+        state.plantAt = System.currentTimeMillis();
     }
 
     @EventHandler
     public void onDefuse(WbdBombDefuseCompleteEvent event) {
         ArenaState state = arenaStates.get(event.getArenaId());
-        if (state != null) state.roundDefuses++;
+        if (state == null) return;
+        state.roundDefuses++;
+        state.defuser = event.getPlayer() == null ? null : event.getPlayer().getName();
+        state.defuseAt = System.currentTimeMillis();
     }
 
     @EventHandler
@@ -315,11 +326,25 @@ public class RoundSummaryModule implements AddonModule, Listener {
         double bestAccuracyValue = -1;
         PlayerRecord topHeadshots = null;
         int topHeadshotCount = 0;
+        UUID topShotsId = null;
+        int topShots = 0;
+        UUID topMissId = null;
+        int topMiss = 0;
         for (Map.Entry<UUID, Counter> entry : state.counters.entrySet()) {
             Counter c = entry.getValue();
             shots += c.shots;
             hits += c.hits;
             headshots += c.headshots;
+
+            if (c.shots > topShots) {
+                topShots = c.shots;
+                topShotsId = entry.getKey();
+            }
+            int miss = c.shots - c.hits;
+            if (miss > topMiss) {
+                topMiss = miss;
+                topMissId = entry.getKey();
+            }
 
             if (c.shots >= 10) {
                 double acc = c.hits / (double) c.shots;
@@ -357,10 +382,99 @@ public class RoundSummaryModule implements AddonModule, Listener {
             facts.add("&7本回合拆包 &f" + state.roundDefuses + " &7次");
         }
 
+        // 下包者 / 点位 / 用时
+        if (state.planter != null) {
+            int plantSec = state.plantAt > 0 && state.roundStart > 0
+                    ? (int) ((state.plantAt - state.roundStart) / 1000) : -1;
+            String site = state.plantSite == null || state.plantSite.isBlank()
+                    ? "" : " &7于 &f" + state.plantSite + " &7点";
+            facts.add("&7本回合 &f" + state.planter + " &7下包" + site
+                    + (plantSec >= 0 ? " &7（第 &f" + plantSec + " &7秒）" : ""));
+        }
+        if (state.defuser != null) {
+            int defuseSec = state.defuseAt > 0 && state.roundStart > 0
+                    ? (int) ((state.defuseAt - state.roundStart) / 1000) : -1;
+            facts.add("&7本回合 &f" + state.defuser + " &7完成拆包"
+                    + (defuseSec >= 0 ? " &7（第 &f" + defuseSec + " &7秒）" : ""));
+        }
+
+        // 伤害
+        if (state.totalDamage > 0) {
+            facts.add("&7本回合总伤害 &f" + state.totalDamage);
+            UUID topDamageId = null;
+            int topDamage = 0;
+            for (Map.Entry<UUID, Integer> entry : state.damage.entrySet()) {
+                if (entry.getValue() > topDamage) {
+                    topDamage = entry.getValue();
+                    topDamageId = entry.getKey();
+                }
+            }
+            if (topDamageId != null) {
+                PlayerRecord record = session.getRecord(topDamageId);
+                if (record != null) {
+                    facts.add("&7本回合最高伤害：&f" + record.getName() + " &7（&f" + topDamage + "）");
+                }
+            }
+        }
+
+        // 最后一杀
+        if (state.lastKillAt > 0 && state.roundStart > 0) {
+            int lastKillSec = (int) ((state.lastKillAt - state.roundStart) / 1000);
+            facts.add("&7本回合最后一杀在 &f" + lastKillSec + " &7秒");
+        }
+
+        // 独活 / 无人生还
+        int participants = session.getPlayers().size();
+        if (participants > 0 && state.roundDeathsTotal >= participants) {
+            facts.add("&7本回合无人生还");
+        } else if (event.getWinner() != null && session.aliveCount(event.getWinner()) == 1) {
+            String lone = null;
+            for (PlayerRecord record : session.getPlayers()) {
+                if (record.isAlive() && record.getTeam() == event.getWinner()) {
+                    lone = record.getName();
+                    break;
+                }
+            }
+            if (lone != null) {
+                facts.add("&7本回合 &f" + lone + " &7独活到最后");
+            }
+        }
+
+        // 手枪局
+        if (isPistolRound(state.roundNumber)) {
+            facts.add("&7本回合是手枪局");
+        }
+
+        // 爆头率
+        if (hits > 0 && headshots > 0) {
+            facts.add("&7本回合爆头率 &f" + percent(headshots, hits));
+        }
+
+        // 子弹王 / 空枪王
+        if (topShotsId != null) {
+            PlayerRecord record = session.getRecord(topShotsId);
+            if (record != null) {
+                facts.add("&7本回合子弹王：&f" + record.getName() + " &7（&f" + topShots + " &7发）");
+            }
+        }
+        if (topMissId != null && topMiss > 0) {
+            PlayerRecord record = session.getRecord(topMissId);
+            if (record != null) {
+                facts.add("&7本回合空枪王：&f" + record.getName() + " &7（&f" + topMiss + " &7发未命中）");
+            }
+        }
+
         if (facts.isEmpty()) {
             return "&7本回合结束";
         }
         return facts.get(ThreadLocalRandom.current().nextInt(facts.size()));
+    }
+
+    private boolean isPistolRound(int round) {
+        if (round == 1) return true;
+        int sideSwitch = plugin.getWbd() == null ? 0
+                : plugin.getWbd().getConfig().getInt("settings.side-switch-round", 0);
+        return sideSwitch > 0 && round == sideSwitch + 1;
     }
 
     private String winnerName(Team winner) {
@@ -397,10 +511,19 @@ public class RoundSummaryModule implements AddonModule, Listener {
 
     private static final class ArenaState {
         long roundStart;
+        int roundNumber;
         long firstKillAt = -1;
         String firstKiller;
         Team firstKillerTeam;
         String firstVictim;
+        long lastKillAt;
+        String planter;
+        String plantSite;
+        long plantAt;
+        String defuser;
+        long defuseAt;
+        int totalDamage;
+        final Map<UUID, Integer> damage = new ConcurrentHashMap<>();
         int roundDeathsTotal;
         int roundPlants;
         int roundDefuses;
@@ -408,12 +531,21 @@ public class RoundSummaryModule implements AddonModule, Listener {
         final Map<UUID, Integer> roundKills = new ConcurrentHashMap<>();
         final Map<UUID, Integer> roundDeaths = new ConcurrentHashMap<>();
 
-        void resetForRound(long now) {
+        void resetForRound(long now, int round) {
             roundStart = now;
+            roundNumber = round;
             firstKillAt = -1;
             firstKiller = null;
             firstKillerTeam = null;
             firstVictim = null;
+            lastKillAt = 0;
+            planter = null;
+            plantSite = null;
+            plantAt = 0;
+            defuser = null;
+            defuseAt = 0;
+            totalDamage = 0;
+            damage.clear();
             roundDeathsTotal = 0;
             roundPlants = 0;
             roundDefuses = 0;
