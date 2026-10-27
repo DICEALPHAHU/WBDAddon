@@ -3,6 +3,7 @@ package alphahu.wbdaddon.module;
 import alphahu.wbdaddon.WBDAddon;
 import alphahu.wbdaddon.api.AddonMode;
 import alphahu.wbdaddon.mode.BombDefuseMode;
+import alphahu.wbdaddon.util.ShopPriceCache;
 import alphahu.wbdaddon.util.WeaponNames;
 import com.warz.bombdefuse.api.WbdBombDefuseCompleteEvent;
 import com.warz.bombdefuse.api.WbdBombPlantCompleteEvent;
@@ -26,6 +27,7 @@ import org.bukkit.event.EventPriority;
 import org.bukkit.event.HandlerList;
 import org.bukkit.event.Listener;
 
+import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -60,6 +62,7 @@ public class RoundSummaryModule implements AddonModule, Listener {
     private final Map<String, ArenaState> arenaStates = new ConcurrentHashMap<>();
 
     private TacZStatsListener tacZListener;
+    private ShopPriceCache shopPrices;
     private int fadeIn;
     private int stay;
     private int fadeOut;
@@ -89,6 +92,11 @@ public class RoundSummaryModule implements AddonModule, Listener {
         this.stay = plugin.getConfig().getInt("modules.round-summary.title-stay", 60);
         this.fadeOut = plugin.getConfig().getInt("modules.round-summary.title-fade-out", 20);
 
+        this.shopPrices = new ShopPriceCache();
+        File shopFile = new File(plugin.getDataFolder().getParentFile(),
+                "WarZBombDefuse/shop.yml");
+        shopPrices.load(shopFile, plugin.getTacZApi());
+
         Bukkit.getPluginManager().registerEvents(this, plugin);
         if (plugin.getTacZApi() != null) {
             try {
@@ -100,7 +108,9 @@ public class RoundSummaryModule implements AddonModule, Listener {
             }
         }
         plugin.getLogger().info("回合结算展示已启动"
-                + (tacZListener != null ? "（含 TacZ 射击统计）" : "（无 TacZ，仅 MVP）") + "。");
+                + (tacZListener != null ? "（含 TacZ 射击统计）" : "（无 TacZ，仅 MVP）")
+                + "，商店价格 " + shopPrices.gunCount() + " 把枪 / "
+                + shopPrices.materialCount() + " 种材质。");
     }
 
     @Override
@@ -186,6 +196,10 @@ public class RoundSummaryModule implements AddonModule, Listener {
         if (victim != null) {
             state.deathWeapon.put(victim.getUniqueId(), WeaponNames.resolve(
                     victim, plugin.getTacZApi(), plugin.isTacZAvailable()));
+            if (shopPrices != null) {
+                state.deathPrice.put(victim.getUniqueId(), shopPrices.priceOf(
+                        victim.getInventory().getItemInMainHand()));
+            }
         }
 
         if (victim != null && killer != null) {
@@ -520,6 +534,49 @@ public class RoundSummaryModule implements AddonModule, Listener {
             facts.add(lone + " 本回合独活");
         }
 
+        // 最贵 / 最穷装备（商店价格）
+        if (shopPrices != null) {
+            PlayerRecord richest = null;
+            int richestPrice = 0;
+            String richestWeapon = null;
+            PlayerRecord poorest = null;
+            int poorestPrice = Integer.MAX_VALUE;
+            String poorestWeapon = null;
+            for (PlayerRecord record : players) {
+                int price = state.deathPrice.getOrDefault(record.getUuid(), 0);
+                String weapon = state.deathWeapon.get(record.getUuid());
+                if (price <= 0) {
+                    Player online = Bukkit.getPlayer(record.getUuid());
+                    if (online != null) {
+                        price = shopPrices.priceOf(online.getInventory().getItemInMainHand());
+                        weapon = WeaponNames.resolve(online, plugin.getTacZApi(),
+                                plugin.isTacZAvailable());
+                    }
+                }
+                if (price <= 0) continue;
+                if (price > richestPrice) {
+                    richestPrice = price;
+                    richest = record;
+                    richestWeapon = weapon;
+                }
+                if (price < poorestPrice) {
+                    poorestPrice = price;
+                    poorest = record;
+                    poorestWeapon = weapon;
+                }
+            }
+            if (richest != null) {
+                facts.add("本回合最贵装备：" + richest.getName() + "（"
+                        + (richestWeapon == null ? "装备" : richestWeapon)
+                        + "，" + richestPrice + " 元）");
+            }
+            if (poorest != null && poorestPrice < richestPrice) {
+                facts.add("本回合最穷装备：" + poorest.getName() + "（"
+                        + (poorestWeapon == null ? "装备" : poorestWeapon)
+                        + "，" + poorestPrice + " 元）");
+            }
+        }
+
         // 拆包时炸弹剩余
         if (state.defuser != null && state.defuseBombSeconds >= 0) {
             facts.add(state.defuser + " 在炸弹还有 " + state.defuseBombSeconds + " 秒爆炸时将其拆除");
@@ -575,9 +632,9 @@ public class RoundSummaryModule implements AddonModule, Listener {
             int playerHits = counter == null ? 0 : counter.hits;
             if (deaths > 0 && playerShots > 0 && playerHits == 0) {
                 String weapon = state.deathWeapon.getOrDefault(record.getUuid(), "枪");
-                int spend = state.spend.getOrDefault(record.getUuid(), 0);
+                int price = state.deathPrice.getOrDefault(record.getUuid(), 0);
                 facts.add(record.getName() + " 本回合拿着"
-                        + (spend > 0 ? "价值 " + spend + " 元的 " : "") + weapon
+                        + (price > 0 ? "价值 " + price + " 元的 " : "") + weapon
                         + " 观察对面跑步姿势");
                 break;
             }
@@ -692,6 +749,7 @@ public class RoundSummaryModule implements AddonModule, Listener {
         Team clutcherTeam;
         final Map<UUID, Cause> lastCause = new ConcurrentHashMap<>();
         final Map<UUID, String> deathWeapon = new ConcurrentHashMap<>();
+        final Map<UUID, Integer> deathPrice = new ConcurrentHashMap<>();
         final List<String> killStories = new ArrayList<>();
         int roundDeathsTotal;
         int roundPlants;
@@ -725,6 +783,7 @@ public class RoundSummaryModule implements AddonModule, Listener {
             clutcherTeam = null;
             lastCause.clear();
             deathWeapon.clear();
+            deathPrice.clear();
             killStories.clear();
             roundDeathsTotal = 0;
             roundPlants = 0;
