@@ -306,6 +306,17 @@ modules:
   menu:
     enabled: true
 
+  # ----------------------------------------------------------
+  # 回合结算展示
+  # 功能：回合结束标题显示胜方 + MVP，副标题随机挑一条本场趣闻
+  #       （全歼用时 / 首杀时间 / C4 爆炸 / 命中率 / 爆头 / 下包拆包等）。
+  # ----------------------------------------------------------
+  round-summary:
+    enabled: true
+    title-fade-in: 10
+    title-stay: 60
+    title-fade-out: 20
+
   round-events:
     enabled: true
 

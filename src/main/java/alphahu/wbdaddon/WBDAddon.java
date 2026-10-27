@@ -17,6 +17,7 @@ import alphahu.wbdaddon.module.MenuModule;
 import alphahu.wbdaddon.module.ModuleManager;
 import alphahu.wbdaddon.module.PositionBackupModule;
 import alphahu.wbdaddon.module.RoundEventsModule;
+import alphahu.wbdaddon.module.RoundSummaryModule;
 import alphahu.wbdaddon.module.TeamArmorModule;
 import alphahu.wbdaddon.module.TechnicalPauseModule;
 import com.warz.bombdefuse.WarZBombDefusePlugin;
@@ -134,6 +135,7 @@ public final class WBDAddon extends JavaPlugin {
         moduleManager.register(new ArenaDropsModule(this));
         moduleManager.register(new TeamArmorModule(this));
         moduleManager.register(new RoundEventsModule(this));
+        moduleManager.register(new RoundSummaryModule(this));
         moduleManager.register(new FreezeCountdownModule(this));
         moduleManager.register(new MenuModule(this));
         moduleManager.register(new TechnicalPauseModule(this));

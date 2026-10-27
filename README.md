@@ -24,6 +24,7 @@ WarZBombDefuse 的第三方附加组件合集 —— 击杀报告 / 单人伤害
 | 技术暂停 | `technical-pause` | `/wbdaddon pause` 管理员即时暂停、`/pause` 玩家每队限次（下一回合开始生效）；顶部 BossBar 倒计时，冻结回合与 C4 计时及玩家操作 |
 | 冻结倒计时音效 | `freeze-countdown` | 回合冻结最后 4 秒每秒一声轻「哒」，音调逐秒升高；冻结不足时只取放得下的最后几秒 |
 | 主菜单 | `menu` | `/wbda` 打开箱子菜单：模式选择（爆破/死斗）、匹配、当前比赛、比赛总结、个人资料；战绩落盘到 `menu-results.yml` / `player-stats.yml` |
+| 回合结算展示 | `round-summary` | 回合结束标题显示胜方 + MVP，副标题随机挑一条本场趣闻（全歼用时 / 首杀 / 命中率 / 爆头等） |
 | JourneyMap 桥接 | `journeymap-bridge` | 同步 WBD 队伍数据到原版 Team，配合 JourneyMap Teams 队友可见、敌军隐藏、观战消失 |
 | 模式接入 API | — | 通过 `WbdAddonApi` 让第三方模式复用上面这些能力，不必各写一份 |
 
