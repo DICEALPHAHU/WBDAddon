@@ -278,29 +278,24 @@ modules:
   #       「上半场最终局」与「赛点」。
   # ----------------------------------------------------------
   # ----------------------------------------------------------
-  # 冻结滤镜模块（服务端近似版）
-  # 功能：回合冻结开始时先全黑，再转黑暗脉动，结束前淡出。
-  # 注意：真正的「灰白 → 彩色」是客户端 shader，服务端只能做「黑 → 暗 → 亮」。
+  # 冻结倒计时音效
+  # 功能：回合冻结最后几秒，每秒一声轻短的「哒」，越接近开局音调越高。
   # ----------------------------------------------------------
-  freeze-filter:
+  freeze-countdown:
     enabled: true
 
-    # 是否用失明（BLINDNESS）做开局全黑。
-    # 部分客户端整合包会把失明渲染成纯白闪光（像闪光弹）；
-    # 如果你看到的是纯白褪变，保持 false，只用黑暗。
-    use-blindness: false
-    blind-ticks: 0
+    # 从最后几秒开始
+    seconds: 3
 
-    # 是否用黑暗（DARKNESS）做暗场
-    use-darkness: true
+    # 音效名（Bukkit Sound 枚举）
+    sound: BLOCK_NOTE_BLOCK_HAT
 
-    # 黑暗是否持续到回合开始
-    darkness-until-live: true
+    # 音量（0.0 - 1.0），压小一点，别盖过枪声
+    volume: 0.35
 
-    # 提前多少 tick 结束黑暗（近似渐亮）
-    fade-ticks: 20
-
-    debug: false
+    # 起始音调与每秒升调幅度（越接近开局越高）
+    base-pitch: 1.6
+    pitch-step: 0.15
 
   round-events:
     enabled: true

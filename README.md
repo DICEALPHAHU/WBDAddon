@@ -22,7 +22,7 @@ WarZBombDefuse 的第三方附加组件合集 —— 击杀报告 / 单人伤害
 | 药水效果清理 | `arena-effects` | 进场与每回合开始时清空药水效果，防止带抗性/速度/力量进场 |
 | 进场位置兜底 | `position-backup` | 记录进场前的位置，服务器重启/插件卸载时传回，重启后登录再补一次 |
 | 技术暂停 | `technical-pause` | `/wbdaddon pause` 管理员即时暂停、`/pause` 玩家每队限次（下一回合开始生效）；顶部 BossBar 倒计时，冻结回合与 C4 计时及玩家操作 |
-| 冻结滤镜 | `freeze-filter` | 回合冻结开始先全黑、再黑暗脉动、结束前淡出（服务端近似，非真灰度） |
+| 冻结倒计时音效 | `freeze-countdown` | 回合冻结最后 3 秒每秒一声轻「哒」，音调逐秒升高，音量压小 |
 | JourneyMap 桥接 | `journeymap-bridge` | 同步 WBD 队伍数据到原版 Team，配合 JourneyMap Teams 队友可见、敌军隐藏、观战消失 |
 | 模式接入 API | — | 通过 `WbdAddonApi` 让第三方模式复用上面这些能力，不必各写一份 |
 
@@ -144,12 +144,13 @@ modules:
     freeze-players: true           # 冻结玩家移动/伤害/交互
     paused-title: "&e技术暂停"
     resumed-title: "&a比赛继续"
-  freeze-filter:
+  freeze-countdown:
     enabled: true
-    use-blindness: false          # 失明可能被客户端渲染成白闪，默认关
-    use-darkness: true            # 只用黑暗做暗场
-    darkness-until-live: true
-    fade-ticks: 20                # 提前 1 秒结束
+    seconds: 3                    # 最后 3 秒开始
+    sound: BLOCK_NOTE_BLOCK_HAT   # 轻「哒」声
+    volume: 0.35                  # 音量压小
+    base-pitch: 1.6               # 起始音调
+    pitch-step: 0.15              # 每秒升调
   round-events:
     enabled: true
     clear-drops-on-round-start: true # 新回合开始时清理上一回合的掉落物
