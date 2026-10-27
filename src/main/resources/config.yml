@@ -285,10 +285,16 @@ modules:
   freeze-filter:
     enabled: true
 
-    # 冻结开始的全黑时长（tick，20 = 1 秒）
-    blind-ticks: 40
+    # 是否用失明（BLINDNESS）做开局全黑。
+    # 部分客户端整合包会把失明渲染成纯白闪光（像闪光弹）；
+    # 如果你看到的是纯白褪变，保持 false，只用黑暗。
+    use-blindness: false
+    blind-ticks: 0
 
-    # 全黑结束后是否用黑暗（DARKNESS）脉动填满剩余冻结时间
+    # 是否用黑暗（DARKNESS）做暗场
+    use-darkness: true
+
+    # 黑暗是否持续到回合开始
     darkness-until-live: true
 
     # 提前多少 tick 结束黑暗（近似渐亮）

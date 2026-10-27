@@ -146,8 +146,9 @@ modules:
     resumed-title: "&a比赛继续"
   freeze-filter:
     enabled: true
-    blind-ticks: 40               # 冻结开始全黑 2 秒
-    darkness-until-live: true     # 之后黑暗脉动到回合开始
+    use-blindness: false          # 失明可能被客户端渲染成白闪，默认关
+    use-darkness: true            # 只用黑暗做暗场
+    darkness-until-live: true
     fade-ticks: 20                # 提前 1 秒结束
   round-events:
     enabled: true

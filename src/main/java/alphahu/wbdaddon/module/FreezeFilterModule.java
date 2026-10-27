@@ -47,6 +47,8 @@ public class FreezeFilterModule implements AddonModule, Listener {
     private final Set<UUID> affected = ConcurrentHashMap.newKeySet();
 
     private boolean darknessUntilLive;
+    private boolean useBlindness;
+    private boolean useDarkness;
     private int blindTicks;
     private int fadeTicks;
     private BukkitTask cleanupTask;
@@ -72,8 +74,12 @@ public class FreezeFilterModule implements AddonModule, Listener {
 
     @Override
     public void onEnable() {
+        this.useBlindness = plugin.getConfig()
+                .getBoolean("modules.freeze-filter.use-blindness", false);
+        this.useDarkness = plugin.getConfig()
+                .getBoolean("modules.freeze-filter.use-darkness", true);
         this.blindTicks = Math.max(0, plugin.getConfig()
-                .getInt("modules.freeze-filter.blind-ticks", 40));
+                .getInt("modules.freeze-filter.blind-ticks", 0));
         this.fadeTicks = Math.max(0, plugin.getConfig()
                 .getInt("modules.freeze-filter.fade-ticks", 20));
         this.darknessUntilLive = plugin.getConfig()
@@ -83,8 +89,8 @@ public class FreezeFilterModule implements AddonModule, Listener {
         this.cleanupTask = Bukkit.getScheduler().runTaskTimer(
                 plugin, this::cleanup, 20L, 20L);
 
-        plugin.getLogger().info("冻结滤镜已启动：全黑 " + blindTicks
-                + " tick，黑暗持续到回合开始"
+        plugin.getLogger().info("冻结滤镜已启动：失明=" + (useBlindness ? blindTicks + " tick" : "关")
+                + "，黑暗=" + (useDarkness ? "开" : "关")
                 + (fadeTicks > 0 ? "（提前 " + fadeTicks + " tick 结束）" : "") + "。");
     }
 
@@ -118,10 +124,10 @@ public class FreezeFilterModule implements AddonModule, Listener {
         for (Player player : Bukkit.getOnlinePlayers()) {
             if (!inArena(player, event.getArenaId())) continue;
 
-            if (blind > 0) {
+            if (useBlindness && blind > 0) {
                 apply(player, PotionEffectType.BLINDNESS, blind);
             }
-            if (darkness > 0) {
+            if (useDarkness && darkness > 0) {
                 apply(player, PotionEffectType.DARKNESS, darkness);
             }
             affected.add(player.getUniqueId());
