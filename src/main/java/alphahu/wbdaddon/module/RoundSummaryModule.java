@@ -216,15 +216,16 @@ public class RoundSummaryModule implements AddonModule, Listener {
             deaths += record.getDeaths();
         }
 
-        String title = winnerName(winner) + " &7| &eMVP: &f"
-                + (mvp == null ? "无" : mvp.getName());
+        String title = winnerName(winner);
         String fact = randomFact(new Facts(event.getReason(), roundSeconds, matchSeconds,
                 firstKillSeconds, roundDeathCount, shots, hits, headshots,
                 plants, defuses, deaths, mvp));
+        String subtitle = "&eMVP: &f" + (mvp == null ? "无" : mvp.getName())
+                + " &7| " + fact;
 
         for (Player player : Bukkit.getOnlinePlayers()) {
             if (inArena(player, arenaId)) {
-                player.sendTitle(color(title), color(fact), fadeIn, stay, fadeOut);
+                player.sendTitle(color(title), color(subtitle), fadeIn, stay, fadeOut);
             }
         }
     }
