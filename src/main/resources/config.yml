@@ -101,17 +101,17 @@ modules:
     # 挑音效用 /wbdaddon sound 试听，不带参数会列出推荐清单。
     # 音量决定可听距离，约等于 16 × 音量（格）：2.0 ≈ 32 格。
     # 客户端会对音量限幅，所以调大只会传得更远，不会把近处玩家震聋。
-    start-sound: BLOCK_NOTE_BLOCK_BIT
-    start-volume: 2.0
-    start-pitch: 0.7
+    start-sound: BLOCK_LEVER_CLICK
+    start-volume: 1.0
+    start-pitch: 1.2
 
     # 拆弹过程中的滴答声。留空 "" 关闭滴答。
-    # 默认用 8-bit 芯片音色，也就是电子设备那种「嘀嘀嘀」
-    tick-sound: BLOCK_NOTE_BLOCK_BIT
-    tick-volume: 2.0
-    tick-pitch: 1.8
+    # 默认用柔和的电子「叮」声（BLOCK_NOTE_BLOCK_PLING），不刺耳
+    tick-sound: BLOCK_NOTE_BLOCK_PLING
+    tick-volume: 1.5
+    tick-pitch: 1.9
     # 滴答间隔（tick）。20 tick = 1 秒。调小更急促，调大更从容
-    tick-interval-ticks: 10
+    tick-interval-ticks: 8
 
     # 拆弹中断（松手、被打断、拆弹者死亡）提示音。
     # WBD 本体已对当事人播放 cancel 音效，故默认留空以免重复

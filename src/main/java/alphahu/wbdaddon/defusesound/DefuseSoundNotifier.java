@@ -91,7 +91,7 @@ public class DefuseSoundNotifier implements Listener {
                 source,
                 interval,
                 maxTicks,
-                parseSound(cfgString("tick-sound", "BLOCK_NOTE_BLOCK_HAT")),
+                parseSound(cfgString("tick-sound", "BLOCK_NOTE_BLOCK_PLING")),
                 (float) cfgDouble("tick-volume", 16.0),
                 (float) cfgDouble("tick-pitch", 1.5)));
 
