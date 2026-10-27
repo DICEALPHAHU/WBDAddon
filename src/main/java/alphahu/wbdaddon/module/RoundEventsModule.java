@@ -125,9 +125,17 @@ public class RoundEventsModule implements AddonModule, Listener {
                 && isMatchPoint(session);
 
         if (halfFinal) {
-            sendTitle(event.getArenaId(),
+            Runnable show = () -> sendTitle(event.getArenaId(),
                     cfg("half-final-title", "&6&l上半场最终局"),
                     cfg("half-final-subtitle", ""));
+            show.run();
+            // 再补发一次：防止被上一回合/其它模块的标题盖掉
+            Bukkit.getScheduler().runTaskLater(plugin, show, 20L);
+        }
+
+        if (plugin.getConfig().getBoolean("modules.round-events.debug", false)) {
+            plugin.getLogger().info("[round-events] round=" + event.getRound()
+                    + " halfFinal=" + halfFinal + " matchPoint=" + matchPoint);
         }
 
         if (matchPoint) {
@@ -180,6 +188,7 @@ public class RoundEventsModule implements AddonModule, Listener {
 
         for (Player player : Bukkit.getOnlinePlayers()) {
             if (!inArena(player, arenaId)) continue;
+            player.resetTitle();
             player.sendTitle(main, sub, fadeIn, stay, fadeOut);
         }
     }
