@@ -38,6 +38,18 @@ modules:
     round-summary-title: "&b====== 你的伤害统计 ======"
     round-summary-footer: "&b========================"
 
+    # 手雷 / 燃烧瓶这类「没有直接攻击者」的伤害归属。
+    # 开启后会在 WBD 之前解析凶手（爆炸实体 / 区域云 / 最近的投掷者），
+    # 致死时按正确凶手结算，播报里就能看到「XXX 使用 M67 手雷 淘汰了 YYY」。
+    indirect-attribution: true
+
+    # 找不到实体来源时，按「最近一次扔投掷物」猜凶手的范围与时间窗
+    indirect-radius: 12.0
+    indirect-seconds: 15
+
+    # 排查用：输出投掷记录与归属过程
+    debug: false
+
     # 每个玩家对自己造成伤害的目标的单行格式
     # 占位符：%victim% 被打的玩家，%damage% 你对 TA 造成的伤害
     damage-line-format: "你对 &f%victim% &7造成了 &b%damage% &7伤害"

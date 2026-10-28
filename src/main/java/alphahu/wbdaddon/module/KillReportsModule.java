@@ -3,6 +3,7 @@ package alphahu.wbdaddon.module;
 import alphahu.wbdaddon.WBDAddon;
 import alphahu.wbdaddon.killreports.DamageTracker;
 import alphahu.wbdaddon.killreports.DeathMessageListener;
+import alphahu.wbdaddon.killreports.IndirectKillListener;
 import alphahu.wbdaddon.killreports.RoundStatsListener;
 import alphahu.wbdaddon.killreports.TacZDamageListener;
 import org.bukkit.Bukkit;
@@ -31,6 +32,9 @@ public class KillReportsModule implements AddonModule {
 
     private TacZDamageListener tacZListener;
 
+    /** 间接伤害（手雷 / 燃烧瓶）的凶手归属。 */
+    private IndirectKillListener indirectListener;
+
     public KillReportsModule(WBDAddon plugin) {
         this.plugin = plugin;
     }
@@ -54,8 +58,13 @@ public class KillReportsModule implements AddonModule {
     public void onEnable() {
         this.damageTracker = new DamageTracker();
 
+        // 间接伤害归属：手雷 / 燃烧瓶这类没有直接攻击者的伤害，先把凶手找出来
+        indirectListener = new IndirectKillListener(plugin, damageTracker);
+        indirectListener.reload();
+        Bukkit.getPluginManager().registerEvents(indirectListener, plugin);
+
         // 死亡消息监听器：显示击杀者与武器
-        deathListener = new DeathMessageListener(plugin, damageTracker);
+        deathListener = new DeathMessageListener(plugin, damageTracker, indirectListener);
         Bukkit.getPluginManager().registerEvents(deathListener, plugin);
 
         // 回合统计监听器：回合结束时广播伤害总览
@@ -84,11 +93,20 @@ public class KillReportsModule implements AddonModule {
             HandlerList.unregisterAll(tacZListener);
             tacZListener = null;
         }
+        if (indirectListener != null) {
+            HandlerList.unregisterAll(indirectListener);
+            indirectListener = null;
+        }
 
         damageTracker = null;
     }
 
     public DamageTracker getDamageTracker() {
         return damageTracker;
+    }
+
+    /** 间接伤害归属监听器（供死亡播报取武器名）。 */
+    public IndirectKillListener getIndirectListener() {
+        return indirectListener;
     }
 }

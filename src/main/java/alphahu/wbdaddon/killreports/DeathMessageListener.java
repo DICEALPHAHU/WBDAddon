@@ -24,10 +24,13 @@ public class DeathMessageListener implements Listener {
 
     private final WBDAddon plugin;
     private final DamageTracker damageTracker;
+    private final IndirectKillListener indirect;
 
-    public DeathMessageListener(WBDAddon plugin, DamageTracker damageTracker) {
+    public DeathMessageListener(WBDAddon plugin, DamageTracker damageTracker,
+                                IndirectKillListener indirect) {
         this.plugin = plugin;
         this.damageTracker = damageTracker;
+        this.indirect = indirect;
     }
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
@@ -41,8 +44,11 @@ public class DeathMessageListener implements Listener {
 
         String message;
         if (killer != null) {
-            // 武器名解析已提到 WeaponNames 工具类，与 WbdAddonApi#resolveWeaponName 共用同一份实现
-            String weapon = WeaponNames.resolve(killer, plugin.getTacZApi(), plugin.isTacZAvailable());
+            // 手雷 / 燃烧瓶这类是间接归属的，用投掷时的物品名；
+            // 其余走 WeaponNames 按击杀者当时手持的武器解析
+            String indirectWeapon = indirect == null ? null : indirect.consumeWeapon(victim);
+            String weapon = indirectWeapon != null ? indirectWeapon
+                    : WeaponNames.resolve(killer, plugin.getTacZApi(), plugin.isTacZAvailable());
             message = plugin.getConfig()
                     .getString("modules.kill-reports.death-message-with-killer",
                             "&c%killer% &7使用 &e%weapon% &7淘汰了 &c%victim%")
