@@ -198,6 +198,9 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
 
     /** 这些材质买到/捡到后直接进背包（9-35），不占快捷栏。 */
     private final Set<Material> backpackMaterials = new HashSet<>();
+
+    /** 配件材质：单独一个类别，只做「进背包」，不占快捷栏也不限购。 */
+    private final Set<Material> attachmentMaterials = new HashSet<>();
     private String taczGunMaterialName = "TACZ_MODERN_KINETIC_GUN";
 
     public LoadoutGuardModule(WBDAddon plugin) {
@@ -275,7 +278,8 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
                     + "首次购买可能被跳过：" + t);
         }
         plugin.getLogger().info("装备槽守卫已启动：" + slotSummary()
-                + "（投掷物上限 " + (throwableLimit <= 0 ? "不限" : throwableLimit + " 颗") + "）。");
+                + "（投掷物上限 " + (throwableLimit <= 0 ? "不限" : throwableLimit + " 颗）")
+                + "；配件进背包。");
         if (!enabledCategories.isEmpty()) {
             StringBuilder off = new StringBuilder();
             for (Map.Entry<Category, Boolean> entry : enabledCategories.entrySet()) {
@@ -443,7 +447,7 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
         sameGunModes.clear();
         refundOldFlags.clear();
         for (Category category : new Category[]{Category.PRIMARY, Category.SECONDARY,
-                Category.MELEE, Category.THROWABLE}) {
+                Category.MELEE, Category.THROWABLE, Category.ATTACHMENT}) {
             enabledCategories.put(category, true);
             replaceOnBuy.put(category, true);
             sameGunModes.put(category, SameGunMode.INHERIT);
@@ -462,6 +466,7 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
         applyCategoryRule(root, "secondary", Category.SECONDARY);
         applyCategoryRule(root, "melee", Category.MELEE);
         applyCategoryRule(root, "throwable", Category.THROWABLE);
+        applyCategoryRule(root, "attachment", Category.ATTACHMENT);
 
         if (!validSlots()) {
             plugin.getLogger().warning("item-categories.yml 的 categories.*.slot 有重复或越界，"
@@ -547,6 +552,7 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
                 .append("\n    on-buy: replace\n    same-gun: replace\n    refund-old: false\n");
         sb.append("  throwable:\n    enabled: true\n    slot: ").append(throwableSlot)
                 .append("\n    limit: ").append(Math.max(0, throwableLimit)).append("\n");
+        sb.append("  attachment:\n    enabled: true\n    # 配件不进快捷栏，统一放背包 9-35 格\n");
 
         try {
             java.nio.file.Files.writeString(file.toPath(), sb.toString(),
@@ -608,6 +614,7 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
                 .append("\n    on-buy: replace\n    same-gun: replace\n    refund-old: false\n");
         sb.append("  throwable:\n    enabled: true\n    slot: ").append(throwableSlot)
                 .append("\n    limit: ").append(Math.max(0, throwableLimit)).append("\n");
+        sb.append("  attachment:\n    enabled: true\n    # 配件不进快捷栏，统一放背包 9-35 格\n");
         sb.append("\n");
         sb.append("# 按 TacZ GunId 指定（大小写不敏感，可省略命名空间 tacz:）\n");
         sb.append("guns:\n");
@@ -702,12 +709,16 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
         readMaterials(base + "melee-materials",
                 List.of("LRTACTICAL_MELEE"), meleeMaterials);
         readMaterials(base + "utility-materials",
-                List.of("LRTACTICAL_CONSUMABLE", "TACZ_ATTACHMENT", "TACZ_AMMO",
-                        "SHEARS", "POTION"), utilityMaterials);
+                List.of("LRTACTICAL_CONSUMABLE", "TACZ_AMMO", "SHEARS", "POTION"),
+                utilityMaterials);
 
         backpackMaterials.clear();
         readMaterials(base + "backpack-materials",
                 List.of("TACZ_ATTACHMENT"), backpackMaterials);
+
+        attachmentMaterials.clear();
+        readMaterials(base + "attachment-materials",
+                List.of("TACZ_ATTACHMENT"), attachmentMaterials);
     }
 
     private void readMaterials(String path, List<String> defaults, Set<Material> target) {
@@ -814,6 +825,7 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
         }
 
         Material type = item.getType();
+        if (attachmentMaterials.contains(type)) return Category.ATTACHMENT;
         Category legacyMaterial = legacyMaterialCategory(type);
         if (legacyMaterial != null) return legacyMaterial;
 
@@ -2089,12 +2101,17 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
      * <p>背包满了就不动它（总比把东西弄丢强）。
      */
     private void moveToBackpack(Player player, PlayerInventory inventory) {
-        if (backpackMaterials.isEmpty()) return;
+        if (!enabled(Category.ATTACHMENT)) return;
+        if (backpackMaterials.isEmpty() && attachmentMaterials.isEmpty()) return;
         boolean moved = false;
         for (int slot = 0; slot < 9; slot++) {
             ItemStack stack = inventory.getItem(slot);
             if (stack == null || stack.getType().isAir()) continue;
-            if (!backpackMaterials.contains(stack.getType())) continue;
+            if (!backpackMaterials.contains(stack.getType())
+                    && !(attachmentMaterials.contains(stack.getType())
+                    && classify(stack) == Category.ATTACHMENT)) {
+                continue;
+            }
 
             int empty = -1;
             for (int candidate = 9; candidate < STORAGE_SIZE; candidate++) {
@@ -2311,6 +2328,7 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
         SECONDARY("副武器"),
         MELEE("近战武器"),
         THROWABLE("投掷物"),
+        ATTACHMENT("配件"),
         UTILITY("功能道具"),
         NONE("物品");
 
@@ -2341,7 +2359,9 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
                 case "secondary" -> SECONDARY;
                 case "melee" -> MELEE;
                 case "throwable" -> THROWABLE;
-                case "utility", "none", "ignore" -> UTILITY;
+                case "attachment", "attach", "scope" -> ATTACHMENT;
+                case "utility" -> UTILITY;
+                case "none", "ignore" -> NONE;
                 default -> null;
             };
         }

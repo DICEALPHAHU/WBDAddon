@@ -679,6 +679,11 @@ modules:
     #   "tacz:some_knife": melee
     gun-overrides: {}
 
+    # 配件材质：单独一个类别（item-categories.yml 的 categories.attachment），
+    # 只做「进背包」，不占快捷栏、不限购；关掉 attachment 类别就不再挪动。
+    attachment-materials:
+      - TACZ_ATTACHMENT
+
     # 这些材质买到 / 捡到后直接进背包（9-35 格），不占快捷栏。
     # WBD 用 addItem 发商品，而 addItem 会先填快捷栏——买配件把枪挤到背包里就很别扭。
     # 背包满了就不动它，不会把东西弄丢。
@@ -694,7 +699,6 @@ modules:
       - LRTACTICAL_MELEE
     utility-materials:
       - LRTACTICAL_CONSUMABLE
-      - TACZ_ATTACHMENT
       - TACZ_AMMO
       - SHEARS
       - POTION
