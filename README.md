@@ -29,6 +29,7 @@ WarZBombDefuse 的第三方附加组件合集 —— 击杀报告 / 单人伤害
 | 回合结算展示 | `round-summary` | 回合结束标题显示胜方 + MVP，副标题随机挑一条本场趣闻（全歼用时 / 首杀 / 命中率 / 爆头等） |
 | JourneyMap 桥接 | `journeymap-bridge` | 同步 WBD 队伍数据到原版 Team，配合 JourneyMap Teams 队友可见、敌军隐藏、观战消失 |
 | 观战第一视角 | `spectate-camera` | 阵亡后自动跟随存活队友的第一视角，目标阵亡/离场自动换人；`/spectate [玩家\|off]` 手动切换 |
+| 商店价格标签 | `shop-price` | 商品 lore 下方显示售价，买得起绿、买不起红 |
 | 昵称标签 | `name-tag` | 队友看得见名牌、敌人看不见：按观察者自己的计分板逐人控制，不泄露位置 |
 | 队友轮廓发光 | `teammate-glow` | 只对同阵营显示队友的发光轮廓（隔墙可见），敌人看不到；靠 ProtocolLib 逐人发包实现 |
 | 少人经济补偿 | `short-handed-compensation` | 从指定回合起，每回合按开局人数差给少人方每人一笔补偿 |

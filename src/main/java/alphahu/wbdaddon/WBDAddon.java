@@ -25,6 +25,7 @@ import alphahu.wbdaddon.module.PositionBackupModule;
 import alphahu.wbdaddon.module.ReconnectModule;
 import alphahu.wbdaddon.module.RoundEventsModule;
 import alphahu.wbdaddon.module.RoundSummaryModule;
+import alphahu.wbdaddon.module.ShopPriceModule;
 import alphahu.wbdaddon.module.ShortHandedCompensationModule;
 import alphahu.wbdaddon.module.TeamArmorModule;
 import alphahu.wbdaddon.module.TechnicalPauseModule;
@@ -162,6 +163,7 @@ public final class WBDAddon extends JavaPlugin {
         moduleManager.register(new ReconnectModule(this));
         moduleManager.register(new ShortHandedCompensationModule(this));
         moduleManager.register(new NameTagModule(this));
+        moduleManager.register(new ShopPriceModule(this));
         moduleManager.register(new SpectateCameraModule(this));
         moduleManager.register(new JourneyMapModule(this));
         // 队友轮廓发光依赖 ProtocolLib 的逐人发包能力，没装就不注册（直接 new 会触发类加载报错）
