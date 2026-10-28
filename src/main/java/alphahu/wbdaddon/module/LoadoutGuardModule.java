@@ -69,7 +69,7 @@ import java.util.concurrent.ConcurrentHashMap;
  *   <li>主武器最多 1 把，固定快捷栏第 1 格；</li>
  *   <li>副武器（手枪）最多 1 把，固定第 2 格；</li>
  *   <li>近战武器最多 1 把，固定第 3 格；</li>
- *   <li>投掷物最多 4 颗，第 4 格放一堆，其余放背包；</li>
+ *   <li>投掷物按配置限购（默认不限），第 4 格放一堆，其余放背包；</li>
  *   <li>购买同类已满时，替换旧武器并退还旧武器的商店售价；</li>
  *   <li>拾取同类武器时，如果身上已经有一把，直接拦截——必须先丢掉旧的才能捡新的。</li>
  * </ul>
@@ -146,7 +146,7 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
     private int primaryLimit = 1;
     private int secondaryLimit = 1;
     private int meleeLimit = 1;
-    private int throwableLimit = 4;
+    private int throwableLimit = 0;
 
     private boolean refundOldWeapon = true;
     /** 刀不要钱：买刀时直接换掉手里那把，不做同款拦截、也不退旧刀。 */
@@ -348,7 +348,7 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
         this.primaryLimit = Math.max(0, plugin.getConfig().getInt(base + "limits.primary", 1));
         this.secondaryLimit = Math.max(0, plugin.getConfig().getInt(base + "limits.secondary", 1));
         this.meleeLimit = Math.max(0, plugin.getConfig().getInt(base + "limits.melee", 1));
-        this.throwableLimit = Math.max(0, plugin.getConfig().getInt(base + "limits.throwable", 4));
+        this.throwableLimit = Math.max(0, plugin.getConfig().getInt(base + "limits.throwable", 0));
         if (primaryLimit != 1 || secondaryLimit != 1 || meleeLimit != 1) {
             plugin.getLogger().warning("装备槽守卫：主武器 / 副武器 / 近战固定各 1 把，"
                     + "limits.primary/secondary/melee 只用于展示，不会放宽限制。");
