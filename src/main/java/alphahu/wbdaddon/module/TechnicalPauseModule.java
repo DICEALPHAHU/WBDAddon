@@ -346,8 +346,8 @@ public class TechnicalPauseModule implements AddonModule, Listener {
             }
         }
 
-        broadcast(arenaId, "&e[断线重联] &f" + playerName + " &e掉线了，暂停等待重连"
-                + "&7（最长 " + clock(seconds) + "，回来就自动继续）。");
+        broadcast(arenaId, "&8[&6比赛&8] &7比赛暂停 — 等待 &f" + playerName
+                + " &7重连 &8(&7上限 " + clock(seconds) + "&8)");
         for (Player player : Bukkit.getOnlinePlayers()) {
             if (!inArena(player, arenaId)) continue;
             player.sendTitle(color(holdTitle), color("&7等待 &f" + playerName + " &7重连"),
@@ -459,8 +459,8 @@ public class TechnicalPauseModule implements AddonModule, Listener {
         p.frozen.clear();
 
         if (p.hold) {
-            broadcast(arenaId, "&a[断线重联] " + p.holdName + " 已重连，比赛继续&7（"
-                    + reason + "）。");
+            broadcast(arenaId, "&8[&6比赛&8] &a" + p.holdName + " &7已重连 — 比赛继续"
+                    + ("等待超时".equals(reason) ? " &8(&7等待超时&8)" : ""));
             for (Player player : Bukkit.getOnlinePlayers()) {
                 if (!inArena(player, arenaId)) continue;
                 player.sendTitle(color(holdResumedTitle), "", 5, 30, 10);

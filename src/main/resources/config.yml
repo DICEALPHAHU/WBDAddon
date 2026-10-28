@@ -485,6 +485,10 @@ modules:
     paused-subtitle: "&7{team} 请求暂停，剩余 {seconds} 秒"
     resumed-title: "&a比赛继续"
 
+    # 断线等待时的 BossBar 标题与恢复标题
+    hold-title: "&6等待重连"
+    hold-resumed-title: "&a比赛继续"
+
     debug: false
 
   # ----------------------------------------------------------

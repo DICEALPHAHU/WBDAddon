@@ -196,18 +196,18 @@ public class ReconnectModule implements AddonModule, Listener {
 
         Set<UUID> covered = cover(r);
         if (covered == null) {
-            broadcast(r.arenaId, "&7[断线重联] " + r.name + " 掉线了"
-                    + "&7（本队本场已经用过等待重连）。");
+            broadcast(r.arenaId, notice("&f" + r.name + " &7断开连接"
+                    + " &8(&7本场重连名额已用尽，比赛继续&8)"));
             return;
         }
         covered.add(r.uuid);
 
-        broadcast(r.arenaId, "&e[断线重联] " + r.name + " 掉线了，下一回合暂停等待"
-                + (covered.size() > 1 ? "他们 " + covered.size() + " 人" : "他回来")
-                + "&7（本队本场第 1 次，"
-                + (holdMaxSeconds <= 0 ? "不限时" : "最多等 " + holdMaxSeconds + " 秒")
-                + (pendingMaxSeconds <= 0 ? "" : "；" + (pendingMaxSeconds / 60) + " 分钟内回来都算重连")
-                + "）。");
+        broadcast(r.arenaId, notice("&f" + r.name + " &7断开连接 — "
+                + "回合结束后暂停等待" + (covered.size() > 1 ? " " + covered.size() + " 人" : "")
+                + "重连 &8(&7" + teamLabel(r.team) + "本场首次"
+                + (holdMaxSeconds <= 0 ? " · 不限时" : " · 上限 " + holdMaxSeconds + "s")
+                + (pendingMaxSeconds <= 0 ? "" : " · " + (pendingMaxSeconds / 60) + " 分钟内有效")
+                + "&8)"));
         if (state == GameState.ROUND_END) {
             startHold(r.arenaId);
         }
@@ -298,8 +298,8 @@ public class ReconnectModule implements AddonModule, Listener {
         if (expired(r)) {
             // 超过重联窗口：按弃赛处理，记录一删，回来就是个普通玩家
             forget(r);
-            player.sendMessage(color("&7你断线超过 " + (pendingMaxSeconds / 60)
-                    + " 分钟，本场已按弃赛处理。"));
+            player.sendMessage(color(noticePrefix() + "&7你已超过重连时限，本场按弃赛处理。"));
+            player.sendMessage(color("&8  &7重新加入请使用 &f/wbd join"));
             debug("超过重联窗口，放弃 " + r.name);
             return;
         }
@@ -335,7 +335,8 @@ public class ReconnectModule implements AddonModule, Listener {
         restore(session, player, r);
         forgive(r);
 
-        broadcast(r.arenaId, "&a[断线重联] " + r.name + " 已重连，回到原阵营。");
+        broadcast(r.arenaId, notice("&a" + r.name + " &7已重连，归队 &f"
+                + teamLabel(r.team) + " &8(&7经济与战绩已恢复&8)"));
         debug("重连成功 " + r.name + " @ " + r.arenaId + "，已写回经济与战绩");
     }
 
@@ -452,8 +453,8 @@ public class ReconnectModule implements AddonModule, Listener {
                 holding.remove(arenaId);
                 Reconnect r = firstPending(arenaId);
                 waiting.remove(arenaId);
-                broadcast(arenaId, "&7[断线重联] 等待已结束"
-                        + (r == null ? "" : "，" + r.name + " 仍未回来") + "。");
+                broadcast(arenaId, notice("&7等待超时"
+                        + (r == null ? "" : " — &f" + r.name + " &7未重返，比赛继续")));
                 debug("等待结束 @" + arenaId);
                 continue;
             }
@@ -623,6 +624,21 @@ public class ReconnectModule implements AddonModule, Listener {
         if (debug) {
             plugin.getLogger().info("[reconnect] " + message);
         }
+    }
+
+    /** 统一的比赛公告前缀。 */
+    private String noticePrefix() {
+        return "&8[&6比赛&8] ";
+    }
+
+    private String notice(String body) {
+        return noticePrefix() + body;
+    }
+
+    private String teamLabel(Team team) {
+        if (team == Team.T) return "T 方";
+        if (team == Team.CT) return "CT 方";
+        return "观战";
     }
 
     private String color(String s) {
