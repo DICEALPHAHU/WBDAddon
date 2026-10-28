@@ -61,6 +61,12 @@ public class SpectateCameraModule implements AddonModule, Listener {
     /** 观战者 -> 顶部「战地记录仪」BossBar。 */
     private final Map<UUID, org.bukkit.boss.BossBar> bars = new ConcurrentHashMap<>();
 
+    /** 刚阵亡、还在「先看自己倒下的地方」缓冲期的观战者。 */
+    private final Set<UUID> holding = ConcurrentHashMap.newKeySet();
+
+    /** 玩家最近一次位置（挨打时更新），阵亡时用来还原死亡视角。 */
+    private final Map<UUID, Location> lastLocation = new ConcurrentHashMap<>();
+
     private BukkitTask task;
     private long intervalTicks;
     private boolean auto;
@@ -68,6 +74,7 @@ public class SpectateCameraModule implements AddonModule, Listener {
     private boolean hud;
     private boolean keySwitch;
     private boolean deathCamera;
+    private long deathHoldTicks;
     private String barTitle;
     private org.bukkit.boss.BarColor barColor;
 
@@ -105,6 +112,8 @@ public class SpectateCameraModule implements AddonModule, Listener {
         this.keySwitch = plugin.getConfig().getBoolean("modules.spectate-camera.key-switch", true);
         this.deathCamera = plugin.getConfig()
                 .getBoolean("modules.spectate-camera.death-camera", true);
+        this.deathHoldTicks = Math.max(0L, plugin.getConfig()
+                .getLong("modules.spectate-camera.death-hold-ticks", 30L));
 
         Bukkit.getPluginManager().registerEvents(this, plugin);
         this.task = Bukkit.getScheduler().runTaskTimer(plugin, this::tick, 40L, intervalTicks);
@@ -120,6 +129,8 @@ public class SpectateCameraModule implements AddonModule, Listener {
         }
         attached.clear();
         lastDeath.clear();
+        holding.clear();
+        lastLocation.clear();
         wipeTeleported.clear();
         lastSwitch.clear();
         for (Player viewer : Bukkit.getOnlinePlayers()) {
@@ -145,6 +156,11 @@ public class SpectateCameraModule implements AddonModule, Listener {
             AddonMode mode = plugin.getApi().getModeFor(player);
             if (mode == null || mode.isAlive(player)) {
                 attached.remove(player.getUniqueId());
+                hideBar(player);
+                continue;
+            }
+
+            if (holding.contains(player.getUniqueId())) {
                 hideBar(player);
                 continue;
             }
@@ -182,11 +198,42 @@ public class SpectateCameraModule implements AddonModule, Listener {
     @EventHandler(priority = EventPriority.MONITOR)
     public void onEliminated(WbdPlayerEliminatedEvent event) {
         Player victim = event.getVictim();
-        if (victim == null || victim.getLocation() == null) return;
+        if (victim == null) return;
+
+        // WBD 在派发事件前就把人传去观战点了，所以死亡位置要用挨打时缓存的那份
+        Location spot = lastLocation.get(victim.getUniqueId());
+        if (spot == null) spot = victim.getLocation();
+        if (spot == null) return;
+
         String team = event.getVictimTeam() == null ? "?" : event.getVictimTeam().name();
         lastDeath.put(event.getArenaId() + "|" + team,
-                new DeathSpot(victim.getName(), victim.getWorld().getName(),
-                        victim.getLocation().clone()));
+                new DeathSpot(victim.getName(), spot.getWorld().getName(), spot.clone()));
+
+        // 阵亡者本人：先把镜头留在自己倒下的地方一小会儿，再切队友
+        if (!victim.isOnline()) return;
+        holdOnDeathSpot(victim, spot);
+    }
+
+    /** 阵亡瞬间把镜头按在自己倒下的位置，缓冲一段时间再交给自动跟随。 */
+    private void holdOnDeathSpot(Player player, Location spot) {
+        if (deathHoldTicks <= 0) return;
+        holding.add(player.getUniqueId());
+        try {
+            player.teleport(spot);
+        } catch (Throwable t) {
+            plugin.getLogger().warning("观战第一视角：还原死亡视角失败：" + t);
+        }
+        Bukkit.getScheduler().runTaskLater(plugin, () -> {
+            holding.remove(player.getUniqueId());
+        }, deathHoldTicks);
+    }
+
+    /** 挨打时刷新位置缓存（比每 tick 记录开销小，精度也够）。 */
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onDamage(org.bukkit.event.entity.EntityDamageEvent event) {
+        if (!(event.getEntity() instanceof Player player)) return;
+        if (player.getLocation() == null) return;
+        lastLocation.put(player.getUniqueId(), player.getLocation().clone());
     }
 
     /** 左键看上一个队友、右键看下一个。 */
