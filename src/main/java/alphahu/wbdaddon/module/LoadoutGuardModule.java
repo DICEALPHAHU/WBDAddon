@@ -35,6 +35,7 @@ import org.bukkit.event.player.PlayerDropItemEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.event.player.PlayerRespawnEvent;
 import org.bukkit.event.player.PlayerSwapHandItemsEvent;
+import org.bukkit.event.player.PlayerToggleSneakEvent;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.PlayerInventory;
 import org.bukkit.scheduler.BukkitTask;
@@ -143,7 +144,10 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
     private boolean dropDuplicates = true;
     private boolean purchaseSafety = true;
     private boolean protectOpenItem = true;
-    private OpenKey openKey = OpenKey.SWAP_HANDS;
+    private OpenKey openKey = OpenKey.SNEAK_SWAP_HANDS;
+
+    /** 双击潜行的上一次时间，key = 玩家 UUID。 */
+    private final Map<UUID, Long> lastSneak = new ConcurrentHashMap<>();
     private boolean debug = false;
     private SameGunPolicy sameGunPolicy = SameGunPolicy.BLOCK;
     private long lockIntervalTicks = 10L;
@@ -258,6 +262,7 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
         scheduledNormalize.clear();
         messageCooldown.clear();
         gunCategoryCache.clear();
+        lastSneak.clear();
         plugin.getLogger().info("装备槽守卫已卸载。");
     }
 
@@ -294,7 +299,7 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
         this.dropDuplicates = plugin.getConfig().getBoolean(base + "drop-duplicates", true);
         this.purchaseSafety = plugin.getConfig().getBoolean(base + "purchase-safety", true);
         this.protectOpenItem = plugin.getConfig().getBoolean(base + "protect-open-item", true);
-        this.openKey = OpenKey.parse(plugin.getConfig().getString(base + "open-key", "swap-hands"));
+        this.openKey = OpenKey.parse(plugin.getConfig().getString(base + "open-key", "sneak-swap-hands"));
         this.debug = plugin.getConfig().getBoolean(base + "debug", false);
         this.lockIntervalTicks = Math.max(1L,
                 plugin.getConfig().getLong(base + "lock-interval-ticks", 10L));
@@ -1475,14 +1480,32 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
             return;
         }
 
-        // F 键（交换副手）当商店快捷键用：服务端能识别的“按键”只有这一颗
-        if (openKey == OpenKey.SWAP_HANDS && openShopByKey(player)) {
+        // 商店快捷键：服务端能识别的“按键”只有交换副手这一颗，
+        // 所以用「潜行 + 换手」这种组合来避免误触
+        boolean bySwapKey = switch (openKey) {
+            case SWAP_HANDS -> true;
+            case SNEAK_SWAP_HANDS -> player.isSneaking();
+            default -> false;
+        };
+        if (bySwapKey && openShopByKey(player)) {
             event.setCancelled(true);
             return;
         }
 
         if (isManaged(player)) {
             scheduleNormalize(player);
+        }
+    }
+
+    /** 双击潜行（Shift）开商店。 */
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onToggleSneak(PlayerToggleSneakEvent event) {
+        if (openKey != OpenKey.DOUBLE_SNEAK || !event.isSneaking()) return;
+        Player player = event.getPlayer();
+        long now = System.currentTimeMillis();
+        Long last = lastSneak.put(player.getUniqueId(), now);
+        if (last != null && now - last <= 350L && openShopByKey(player)) {
+            lastSneak.remove(player.getUniqueId());
         }
     }
 
@@ -1568,6 +1591,7 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
         purchaseCounts.remove(uuid);
         lastSpend.remove(uuid);
         preGive.remove(uuid);
+        lastSneak.remove(uuid);
         scheduledNormalize.remove(uuid);
         messageCooldown.keySet().removeIf(key -> key.startsWith(uuid + ":"));
     }
@@ -1668,14 +1692,22 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
 
     /** 打开商店的按键。服务端只能感知「交换副手」，所以选项就这两个有意义。 */
     private enum OpenKey {
+        /** 潜行 + 交换副手：F 单独按仍然是原来的换手，误触不了。 */
+        SNEAK_SWAP_HANDS,
+        /** 交换副手：按 F 直接开商店。 */
         SWAP_HANDS,
+        /** 连按两下潜行（Shift）。 */
+        DOUBLE_SNEAK,
+        /** 关掉按键，只用绿宝石右键 / /wbd buy。 */
         OFF;
 
         static OpenKey parse(String raw) {
-            if (raw == null) return SWAP_HANDS;
+            if (raw == null) return SNEAK_SWAP_HANDS;
             return switch (raw.trim().toLowerCase(Locale.ROOT)) {
+                case "swap-hands", "swap", "f" -> SWAP_HANDS;
+                case "double-sneak", "sneak2", "double-shift" -> DOUBLE_SNEAK;
                 case "off", "none", "disabled", "false" -> OFF;
-                default -> SWAP_HANDS;
+                default -> SNEAK_SWAP_HANDS;
             };
         }
     }

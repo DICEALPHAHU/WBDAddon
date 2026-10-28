@@ -510,11 +510,14 @@ modules:
     # 被拖走 / 被购买顶掉 / 被别的插件清掉，下一秒自动放回固定槽位。
     protect-open-item: true
 
-    # 打开商店的按键。服务端只能识别「交换副手」这一颗键（默认 F），
-    # 客户端如果把「交换副手」改成别的键，这里就跟着变。
-    #   swap-hands = 按 F 直接打开商店（默认）
-    #   off        = 只能用绿宝石右键 / /wbd buy
-    open-key: swap-hands
+    # 打开商店的按键。服务端能收到的“按键”只有「交换副手」这一颗，
+    # 单按太容易误触，所以默认用组合键：
+    #   sneak-swap-hands = 潜行（Shift）时按 F（默认）
+    #   swap-hands       = 直接按 F
+    #   double-sneak     = 连按两下 Shift（350ms 内）
+    #   off              = 只能用绿宝石右键 / /wbd buy
+    # 客户端若把「交换副手」改绑成别的键，F 那两种会跟着改。
+    open-key: sneak-swap-hands
 
     # 购买兜底：WBD 发物品时不检查「发不出去」——
     #   · 背包（36 格）全满时 addItem 的剩余堆叠被直接丢弃，钱却已经扣了；
