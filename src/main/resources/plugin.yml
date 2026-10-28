@@ -1,6 +1,7 @@
 name: WBDAddon
-# 版本号由 Maven 在打包时从 pom.xml 注入（resources filtering），
-# 升版本只需改 pom.xml 一处，不会出现 plugin.yml 与 pom 不同步
+# 这里的版本是「对外版本」，由构建脚本从 public-version.txt 注入。
+# 内部版本（每次更新自增）在 pom.xml 的 <version> 里，只体现在产物文件名上：
+#   WBDAddon-<对外版本>-<内部版本>-<git短哈希>-<时间戳>.jar
 version: ${project.version}
 main: alphahu.wbdaddon.WBDAddon
 api-version: '1.20'

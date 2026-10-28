@@ -124,7 +124,7 @@ WarZBombDefuse 的第三方附加组件合集 —— 击杀报告 / 单人伤害
 
 ## 安装
 
-1. 把构建好的 `WBDAddon-<版本>-<git短哈希>-<构建时间戳>.jar` 放进服务端 `plugins`
+1. 把构建好的 `WBDAddon-<对外版本>-<内部版本>-<git短哈希>-<构建时间戳>.jar` 放进服务端 `plugins`
 2. 重启服务器（或 `/reload`）
 3. 插件自动生成 `config.yml`，按需修改
 
@@ -365,12 +365,26 @@ WBDAddon 依赖的是**闭源收费**的 WarZBombDefuse API（`pom.xml` 里是 s
 3. 然后再构建:
 
 ```bash
+# 二选一
+./build.sh        # javac --release 17，不依赖 mvn
 mvn clean package
 ```
 
-产物在 `target/WBDAddon-<版本>-<git短哈希>-<构建时间戳>.jar`，例如 `WBDAddon-1.2.1-0e65b2d-20261013-0250.jar`。
+产物命名：
 
-> 产物名里的短哈希来自 git-commit-id 插件，时间戳是 UTC。这样同一版本的多次构建不会互相覆盖，也能一眼对应到是哪份代码；拿不到 git 信息时（例如源码被拷出仓库）会显示 `nogit`，构建不会失败。
+```
+WBDAddon-<对外版本>-<内部版本>-<git短哈希>-<时间戳>.jar
+例：WBDAddon-1.2.2-1.31.1-2c890b4-20261028-1427.jar
+```
+
+两个版本号分工明确：
+
+| 版本 | 来源 | 用途 |
+|---|---|---|
+| **对外版本** | `public-version.txt` | 玩家看到的：`plugin.yml` 的 `version`、`/plugins` 列表、发布帖 |
+| **内部版本** | `pom.xml` 的 `<version>` | 每次更新自增，只体现在产物文件名与 `git.properties` 里 |
+
+> 产物名里的短哈希与时间戳用于区分同版本的多次构建；拿不到 git 信息时会显示 `nogit`，构建不会失败。
 
 ## 许可证
 
