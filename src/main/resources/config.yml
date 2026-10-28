@@ -506,6 +506,13 @@ modules:
     # 是否把多出来的丢到玩家脚下。false = 保留现场，不删也不丢。
     drop-duplicates: true
 
+    # 购买兜底：WBD 发物品时不检查「发不出去」——
+    #   · 背包（36 格）全满时 addItem 的剩余堆叠被直接丢弃，钱却已经扣了；
+    #   · 配了 give-slot 的商品会 setItem 直接覆盖那一格，原本的东西凭空消失。
+    # 开启后会在扣钱瞬间抓一份背包快照，发现东西没到手就按比例退款，
+    # 发现落点格被顶掉就把旧物品还回去（放不下就丢在脚下）。
+    purchase-safety: true
+
     # 排查用：输出分类、替换、退款、归位日志。
     debug: false
 
@@ -558,7 +565,9 @@ modules:
       replaced-no-refund: "&a已替换 %old% &7→ &a%new%&7（旧武器无商店售价）"
       same-gun-blocked: "&c你已装备 %gun%&c，本次购买已取消并退还 &e$%price%"
       same-gun-blocked-free: "&c你已装备 %gun%&c，本次购买已取消。"
-      purchase-missing: "&c购买的物品没有进入背包（可能背包已满），已退还 &e$%price%"
+      purchase-missing: "&c背包放不下，购买的物品没有给到你，已退还 &e$%price%"
+      purchase-missing-free: "&c背包放不下，这次购买的物品没有给到你。"
+      slot-restored: "&7购买覆盖了那一格，已把 &f%item% &7放回背包。"
       throwable-full: "&c投掷物最多携带 %limit% 颗，超出部分已退还 &e$%refund%"
       throwable-full-no-refund: "&c投掷物最多携带 %limit% 颗，超出部分已移除。"
       throwable-excess: "&c投掷物超过上限 %limit% 颗，多出的 %amount% 颗已丢到脚下。"

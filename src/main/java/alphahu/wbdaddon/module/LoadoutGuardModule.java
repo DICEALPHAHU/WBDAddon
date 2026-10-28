@@ -46,6 +46,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -101,6 +102,16 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
     /** 最近一次扣钱记录，用来确认这次点击真的扣了钱（被 WBD 拒绝的点击不会扣钱）。 */
     private final Map<UUID, Spend> lastSpend = new ConcurrentHashMap<>();
 
+    /**
+     * 扣钱瞬间的背包快照，用来判断 WBD 到底把东西给没给出去。
+     *
+     * <p>WBD 的 {@code handleClick} 是「先扣钱 → 再发物品」，且它自己的
+     * {@code InventoryClickEvent} 也注册在 {@code LOWEST}（比本插件更早），
+     * 所以点击结束、我们能拿到事件时物品早就发完了。
+     * 只有在扣钱那一刻抓一份快照，才能还原「发之前是什么样」。
+     */
+    private final Map<UUID, InventoryBefore> preGive = new ConcurrentHashMap<>();
+
     /** 同一个 tick 内多个事件只安排一次归位。 */
     private final Set<UUID> scheduledNormalize = ConcurrentHashMap.newKeySet();
 
@@ -129,6 +140,7 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
 
     private boolean refundOldWeapon = true;
     private boolean dropDuplicates = true;
+    private boolean purchaseSafety = true;
     private boolean debug = false;
     private SameGunPolicy sameGunPolicy = SameGunPolicy.BLOCK;
     private long lockIntervalTicks = 10L;
@@ -175,6 +187,7 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
     public void onEnable() {
         purchaseCounts.clear();
         lastSpend.clear();
+        preGive.clear();
         scheduledNormalize.clear();
         messageCooldown.clear();
         warnedGuns.clear();
@@ -238,6 +251,7 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
         HandlerList.unregisterAll(this);
         purchaseCounts.clear();
         lastSpend.clear();
+        preGive.clear();
         scheduledNormalize.clear();
         messageCooldown.clear();
         gunCategoryCache.clear();
@@ -275,6 +289,7 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
 
         this.refundOldWeapon = plugin.getConfig().getBoolean(base + "refund-old-weapon", true);
         this.dropDuplicates = plugin.getConfig().getBoolean(base + "drop-duplicates", true);
+        this.purchaseSafety = plugin.getConfig().getBoolean(base + "purchase-safety", true);
         this.debug = plugin.getConfig().getBoolean(base + "debug", false);
         this.lockIntervalTicks = Math.max(1L,
                 plugin.getConfig().getLong(base + "lock-interval-ticks", 10L));
@@ -826,6 +841,11 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
         if (player == null) return;
         lastSpend.put(player.getUniqueId(),
                 new Spend(-event.getDelta(), System.currentTimeMillis()));
+        if (purchaseSafety) {
+            // 扣钱发生在 WBD「发物品」之前，这一瞬间的背包就是判定基准
+            preGive.put(player.getUniqueId(),
+                    new InventoryBefore(snapshotContents(player), System.currentTimeMillis()));
+        }
     }
 
     @EventHandler(priority = EventPriority.MONITOR)
@@ -924,6 +944,13 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
             return;
         }
 
+        // 先确认东西真的进包了：WBD 对 addItem 的返回值「无动于衷」，
+        // 背包满时物品直接蒸发、钱照扣；配了 give-slot 的还会直接覆盖那一格。
+        if (recoverLostPurchase(player, session, shopItem, give)) {
+            scheduleNormalize(player);
+            return;
+        }
+
         Category category = classify(give);
         if (category == Category.NONE || category == Category.UTILITY) {
             scheduleNormalize(player);
@@ -935,6 +962,122 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
         if (!isManaged(player)) return;
         handlePurchase(player, session, shopItem, give, category);
         normalize(player);
+    }
+
+    /**
+     * 购买后核对「东西真的到手了吗」。
+     *
+     * <p>WBD 的发放逻辑有两条路，两条都可能把东西吞掉：
+     *
+     * <ul>
+     *   <li>{@code give-slot >= 0}：直接 {@code setItem(slot, stack)}，
+     *       那一格原本的东西被顶掉，凭空消失；</li>
+     *   <li>{@code give-slot < 0}：{@code addItem(...)}，背包全满时返回的
+     *       剩余堆叠被直接丢弃，物品蒸发。</li>
+     * </ul>
+     *
+     * <p>两种情况下钱都已经扣过了。这里用扣钱瞬间的快照对比，把损失补回来：
+     * 新物品没进包 → 按比例退款；旧格子被顶掉 → 把旧物品还回去。
+     *
+     * @return 已经处理（退款 / 归还）返回 true，调用方不要再走同类替换逻辑
+     */
+    private boolean recoverLostPurchase(Player player, ArenaSession session,
+                                        ShopItem shopItem, ItemStack give) {
+        if (!purchaseSafety) return false;
+
+        InventoryBefore before = preGive.remove(player.getUniqueId());
+        if (before == null || System.currentTimeMillis() - before.at() > 500L) {
+            return false;
+        }
+        ItemStack[] was = before.contents();
+        ItemStack[] now = snapshotContents(player);
+
+        int expected = Math.max(1, give.getAmount());
+        int gained = amountOf(now, give) - amountOf(was, give);
+
+        // 落点格子：WBD 会直接覆盖，被覆盖掉的旧物品要还给玩家
+        int slot = shopItem.getGiveSlot();
+        if (slot >= 0 && slot < was.length) {
+            ItemStack old = was[slot];
+            if (old != null && !old.getType().isAir() && !sameShopItem(old, give)) {
+                int oldBefore = amountOf(was, old);
+                int oldAfter = amountOf(now, old);
+                if (oldAfter < oldBefore) {
+                    for (int i = 0; i < oldBefore - oldAfter; i++) {
+                        restoreStack(player, old);
+                    }
+                    msg(player, "slot-restored", Map.of("item", itemName(old)));
+                    if (debug) {
+                        plugin.getLogger().info("[loadout] " + player.getName()
+                                + " 的落点格被购买覆盖，已归还 " + itemName(old));
+                    }
+                }
+            }
+        }
+
+        if (gained >= expected) {
+            return false;
+        }
+
+        int missing = expected - Math.max(0, gained);
+        int price = shopItem.getPrice();
+        int refundAmount = price <= 0 ? 0
+                : Math.max(1, (int) Math.round(price * (double) missing / expected));
+        if (refundAmount > 0) {
+            refund(session, player, refundAmount);
+            msg(player, "purchase-missing", Map.of("price", String.valueOf(refundAmount)));
+        } else {
+            msg(player, "purchase-missing-free", Map.of());
+        }
+        if (debug) {
+            plugin.getLogger().warning("[loadout] " + player.getName() + " 购买 "
+                    + itemName(give) + " 没有进背包（期望 " + expected + "，实得 "
+                    + Math.max(0, gained) + "），退款 " + refundAmount + "。");
+        }
+        return true;
+    }
+
+    /** 背包存储区快照（元素逐个 clone，避免后续改物品把快照也带偏）。 */
+    private ItemStack[] snapshotContents(Player player) {
+        ItemStack[] contents = player.getInventory().getStorageContents();
+        ItemStack[] copy = new ItemStack[contents.length];
+        for (int i = 0; i < contents.length; i++) {
+            copy[i] = contents[i] == null ? null : contents[i].clone();
+        }
+        return copy;
+    }
+
+    /** 统计某件商品在背包里一共有多少个（按类型 + 显示名，忽略 PDC 标记）。 */
+    private int amountOf(ItemStack[] contents, ItemStack sample) {
+        int total = 0;
+        for (ItemStack stack : contents) {
+            if (stack != null && sameShopItem(stack, sample)) {
+                total += stack.getAmount();
+            }
+        }
+        return total;
+    }
+
+    /**
+     * 商店物品的「同一件」判断。
+     *
+     * <p>不用 {@link ItemStack#isSimilar}：WBD 发拆弹器时会顺手写一个
+     * {@code item_marker} PDC，和快照里的同款物品就差这一点，isSimilar 会判成不同。
+     */
+    private boolean sameShopItem(ItemStack a, ItemStack b) {
+        if (a == null || b == null || a.getType() != b.getType()) return false;
+        String nameA = a.hasItemMeta() ? a.getItemMeta().getDisplayName() : "";
+        String nameB = b.hasItemMeta() ? b.getItemMeta().getDisplayName() : "";
+        return Objects.equals(nameA, nameB);
+    }
+
+    /** 放回背包，放不下就丢在脚下（总比凭空消失好）。 */
+    private void restoreStack(Player player, ItemStack stack) {
+        ItemStack copy = stack.clone();
+        Map<Integer, ItemStack> left = player.getInventory().addItem(copy);
+        for (ItemStack drop : left.values()) {
+            player.getWorld().dropItemNaturally(player.getLocation(), drop);
+        }
     }
 
     private ShopItem findShopItem(ShopManager shop, String itemId, int slot, Player player) {
@@ -1322,6 +1465,7 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
         UUID uuid = event.getPlayer().getUniqueId();
         purchaseCounts.remove(uuid);
         lastSpend.remove(uuid);
+        preGive.remove(uuid);
         scheduledNormalize.remove(uuid);
         messageCooldown.keySet().removeIf(key -> key.startsWith(uuid + ":"));
     }
@@ -1411,6 +1555,10 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
     }
 
     private record Spend(int amount, long at) {
+    }
+
+    /** 扣钱那一刻的背包存储区快照。 */
+    private record InventoryBefore(ItemStack[] contents, long at) {
     }
 
     private record PurchaseItems(SlotItem oldItem, SlotItem newItem) {
