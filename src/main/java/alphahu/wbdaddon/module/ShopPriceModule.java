@@ -125,6 +125,11 @@ public class ShopPriceModule implements AddonModule, Listener {
             if (stack == null || stack.getType().isAir()) continue;
             ShopItem item = match(shop, stack);
             if (item == null || item.getPrice() <= 0) continue;
+            if (plugin.getConfig().getBoolean("modules." + ID + ".debug", false)) {
+                plugin.getLogger().info("[shop-price] " + player.getName() + " 槽位 " + slot
+                        + " → " + item.getId() + " = $" + item.getPrice()
+                        + "（余额 " + money + "）");
+            }
             inventory.setItem(slot, decorateStack(stack, item.getPrice(), money, showMoney));
         }
     }
@@ -132,28 +137,34 @@ public class ShopPriceModule implements AddonModule, Listener {
     /**
      * 找出这个格子对应哪件商品。
      *
-     * <p>不比整个 ItemStack：WBD 渲染时可能给显示物品加上「已购买」「售罄」
-     * 之类的 lore，{@code isSimilar} 就会失配。按「材质 + 显示名」比足够准，
-     * 也不会因为 lore 变了就认不出。
+     * <p>WBD 往界面里放的每一件都带了 {@code shop:<商品id>} 的 PDC 标记
+     * （{@code ItemUtil.copyWithMarker}），直接读标记就能百分百对上，
+     * 不用猜。
+     *
+     * <p>之前按「材质 + 显示名」比对吃过亏：枪械全是同一种材质，
+     * 显示名又可能是空的，于是所有枪都会匹配到列表里的第一把 ——
+     * 价格自然全错。认不出标记时宁可**不加价格**，也不能写错。
      */
     private ShopItem match(ShopManager shop, ItemStack stack) {
-        String name = plainName(stack);
-        for (ShopItem item : shop.getItems()) {
-            ItemStack display = item.getDisplayStack();
-            if (display == null) continue;
-            if (display.getType() != stack.getType()) continue;
-            if (!plainName(display).equals(name)) continue;
-            return item;
+        String marker = markerOf(stack);
+        if (marker != null) {
+            for (ShopItem item : shop.getItems()) {
+                if (item.getId().equalsIgnoreCase(marker)) return item;
+            }
         }
         return null;
     }
 
-    private String plainName(ItemStack stack) {
-        ItemMeta meta = stack.getItemMeta();
-        if (meta != null && meta.hasDisplayName()) {
-            return stripColor(meta.getDisplayName()).trim();
+    /** 读出 {@code shop:<id>} 里的 id。 */
+    private String markerOf(ItemStack stack) {
+        try {
+            String raw = com.warz.bombdefuse.util.ItemUtil.getMarker(stack, plugin.getWbd());
+            if (raw == null || raw.isBlank()) return null;
+            int index = raw.indexOf(':');
+            return index < 0 ? raw : raw.substring(index + 1);
+        } catch (Throwable t) {
+            return null;
         }
-        return stack.getType().name();
     }
 
     private ItemStack decorateStack(ItemStack stack, int price, int money, boolean showMoney) {
