@@ -19,9 +19,12 @@ import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
+import org.bukkit.event.EventPriority;
 import org.bukkit.event.HandlerList;
 import org.bukkit.event.Listener;
 import org.bukkit.event.inventory.InventoryClickEvent;
+import org.bukkit.event.inventory.InventoryType;
+import org.bukkit.event.player.PlayerSwapHandItemsEvent;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.InventoryHolder;
 import org.bukkit.inventory.ItemStack;
@@ -72,6 +75,9 @@ public class MenuModule implements AddonModule, Listener {
     private final java.util.List<MatchRecord> history = new java.util.ArrayList<>();
     private int historySize;
 
+    /** 是否启用 Shift+F 开菜单（modules.menu.open-key = off 时关闭）。 */
+    private boolean keybind = true;
+
     /** 玩家生涯统计（跨比赛累计）。 */
     private final Map<UUID, Stats> stats = new ConcurrentHashMap<>();
 
@@ -106,11 +112,15 @@ public class MenuModule implements AddonModule, Listener {
         this.statsFile = new File(plugin.getDataFolder(), "player-stats.yml");
         this.historySize = Math.max(1,
                 plugin.getConfig().getInt("modules.menu.history-size", 30));
+        this.keybind = !"off".equalsIgnoreCase(
+                plugin.getConfig().getString("modules.menu.open-key", "sneak-swap-hands"));
         loadResults();
         loadStats();
 
         Bukkit.getPluginManager().registerEvents(this, plugin);
-        plugin.getLogger().info("主菜单已启动：/wbda 打开，已载入 "
+        plugin.getLogger().info("主菜单已启动：/wbda 或 "
+                + (keybind ? "Shift+F " : "命令 ")
+                + "打开，已载入 "
                 + lastResults.size() + " 条比赛记录、" + stats.size() + " 份生涯数据。");
     }
 
@@ -136,6 +146,24 @@ public class MenuModule implements AddonModule, Listener {
 
     public void openMain(Player player) {
         open(player, Screen.MAIN, null, null);
+    }
+
+    /**
+     * Shift + F 打开主菜单。
+     *
+     * <p>服务端能识别的按键只有「交换副手」，所以用潜行组合来区分：
+     * 单按 F 仍是原版换手，Shift + F 才弹菜单。
+     * 优先于装备槽守卫的按键处理（那边是 LOW），避免被绿宝石拦截。
+     */
+    @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = true)
+    public void onSwapHands(PlayerSwapHandItemsEvent event) {
+        if (!keybind) return;
+        Player player = event.getPlayer();
+        if (!player.isSneaking()) return;
+        // 已经开着别的界面时（商店、箱子）不抢，免得把人家窗口顶掉
+        if (player.getOpenInventory().getType() != InventoryType.CRAFTING) return;
+        event.setCancelled(true);
+        openMain(player);
     }
 
     // ------------------------------------------------------------------
@@ -869,6 +897,12 @@ public class MenuModule implements AddonModule, Listener {
 
     private void saveResults() {
         if (resultsFile == null) return;
+        // 防御：内存里什么都没有、磁盘上却有内容时，绝不覆盖。
+        // 之前 /wbdaddon reload 在半路抛错，模块被卸载了两次，
+        // 第二次 onDisable 从已清空的内存里写出空文件，把历史记录洗掉了。
+        if (lastResults.isEmpty() && history.isEmpty() && fileHasData(resultsFile)) {
+            return;
+        }
         YamlConfiguration yaml = new YamlConfiguration();
         for (Map.Entry<String, LastResult> entry : lastResults.entrySet()) {
             String base = "results." + entry.getKey();
@@ -934,6 +968,9 @@ public class MenuModule implements AddonModule, Listener {
 
     private void saveStats() {
         if (statsFile == null) return;
+        if (stats.isEmpty() && fileHasData(statsFile)) {
+            return;
+        }
         YamlConfiguration yaml = new YamlConfiguration();
         for (Map.Entry<UUID, Stats> entry : stats.entrySet()) {
             String base = "players." + entry.getKey();
@@ -950,6 +987,15 @@ public class MenuModule implements AddonModule, Listener {
             yaml.save(statsFile);
         } catch (IOException e) {
             plugin.getLogger().warning("保存 player-stats.yml 失败：" + e.getMessage());
+        }
+    }
+
+    /** 文件里是否已经有内容（有内容就不该被空内存覆盖）。 */
+    private boolean fileHasData(java.io.File file) {
+        try {
+            return file != null && file.isFile() && file.length() > 32L;
+        } catch (Throwable t) {
+            return false;
         }
     }
 
