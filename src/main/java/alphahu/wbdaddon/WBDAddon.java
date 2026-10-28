@@ -260,6 +260,44 @@ public final class WBDAddon extends JavaPlugin {
         return reloading;
     }
 
+    // ------------------------------------------------------------------
+    // 数据目录
+    // ------------------------------------------------------------------
+
+    /**
+     * 运行时数据目录 {@code plugins/WBDAddon/data/}。
+     *
+     * <p>配置（config.yml / item-categories.yml / weapon-names.yml）留在插件根目录方便改，
+     * 生涯、比赛、位置这类会自己增长的数据统一放这里，根目录就不乱了。
+     */
+    public java.io.File getDataDir() {
+        java.io.File dir = new java.io.File(getDataFolder(), "data");
+        if (!dir.exists()) {
+            dir.mkdirs();
+        }
+        return dir;
+    }
+
+    /**
+     * 取一个数据文件；如果插件根目录还留着同名的旧文件，自动搬进 {@code data/}。
+     *
+     * <p>旧版本把 {@code menu-results.yml} / {@code player-stats.yml} /
+     * {@code position-backup.yml} 直接放在根目录，这里负责无痛迁移。
+     */
+    public java.io.File dataFile(String name) {
+        java.io.File target = new java.io.File(getDataDir(), name);
+        java.io.File legacy = new java.io.File(getDataFolder(), name);
+        if (!target.exists() && legacy.exists() && legacy.isFile()) {
+            try {
+                java.nio.file.Files.move(legacy.toPath(), target.toPath());
+                getLogger().info("已把 " + name + " 迁移到 data/ 目录。");
+            } catch (Throwable t) {
+                getLogger().warning("迁移 " + name + " 到 data/ 失败：" + t.getMessage());
+            }
+        }
+        return target;
+    }
+
     /**
      * 把 plugin.yml 里的一个投票命令挂到共用的 {@link VoteCommand} 上。
      * 命令没在 plugin.yml 里声明（或被别的插件抢注）时静默跳过，不影响其他命令。

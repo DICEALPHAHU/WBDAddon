@@ -81,7 +81,7 @@ public class PositionBackupModule implements AddonModule, Listener {
                 .getBoolean("modules.position-backup.restore-on-disable", true);
         this.restoreOnRejoin = plugin.getConfig()
                 .getBoolean("modules.position-backup.restore-on-rejoin", true);
-        this.file = new File(plugin.getDataFolder(), "position-backup.yml");
+        this.file = plugin.dataFile("position-backup.yml");
 
         load();
         Bukkit.getPluginManager().registerEvents(this, plugin);

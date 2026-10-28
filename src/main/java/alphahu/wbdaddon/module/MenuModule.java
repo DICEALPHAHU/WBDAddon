@@ -84,8 +84,8 @@ public class MenuModule implements AddonModule, Listener {
     /** 当前这场比赛已经计入过的玩家，避免离场和比赛结束重复累加。 */
     private final Map<String, Set<UUID>> counted = new ConcurrentHashMap<>();
 
-    private File resultsFile;
-    private File statsFile;
+    /** 生涯数据 + 比赛历史 + 最近结果，统一放在 data/stats.yml。 */
+    private File storageFile;
 
     public MenuModule(WBDAddon plugin) {
         this.plugin = plugin;
@@ -108,14 +108,13 @@ public class MenuModule implements AddonModule, Listener {
 
     @Override
     public void onEnable() {
-        this.resultsFile = new File(plugin.getDataFolder(), "menu-results.yml");
-        this.statsFile = new File(plugin.getDataFolder(), "player-stats.yml");
+        this.storageFile = plugin.dataFile("stats.yml");
         this.historySize = Math.max(1,
                 plugin.getConfig().getInt("modules.menu.history-size", 30));
         this.keybind = !"off".equalsIgnoreCase(
                 plugin.getConfig().getString("modules.menu.open-key", "sneak-swap-hands"));
-        loadResults();
-        loadStats();
+        migrateLegacyFiles();
+        loadStorage();
 
         Bukkit.getPluginManager().registerEvents(this, plugin);
         plugin.getLogger().info("主菜单已启动：/wbda 或 "
@@ -132,8 +131,7 @@ public class MenuModule implements AddonModule, Listener {
                 player.closeInventory();
             }
         }
-        saveResults();
-        saveStats();
+        saveStorage();
         lastResults.clear();
         stats.clear();
         counted.clear();
@@ -700,7 +698,7 @@ public class MenuModule implements AddonModule, Listener {
         String winnerName = winner == null ? "无" : winner.name();
         lastResults.put(event.getArenaId(),
                 new LastResult(winnerName, event.getTScore(), event.getCtScore()));
-        saveResults();
+        saveStorage();
 
         ArenaSession session = session(event.getArenaId());
         if (session != null) {
@@ -710,7 +708,7 @@ public class MenuModule implements AddonModule, Listener {
                 if (!done.add(record.getUuid())) continue;
                 addStats(record, true, winner);
             }
-            saveStats();
+            saveStorage();
 
             java.util.List<Line> lines = new java.util.ArrayList<>();
             for (PlayerRecord record : session.getPlayers()) {
@@ -724,7 +722,7 @@ public class MenuModule implements AddonModule, Listener {
             while (history.size() > historySize) {
                 history.remove(history.size() - 1);
             }
-            saveResults();
+            saveStorage();
         }
     }
 
@@ -742,7 +740,7 @@ public class MenuModule implements AddonModule, Listener {
         if (!done.add(player.getUniqueId())) return;
 
         addStats(record, false, null);
-        saveStats();
+        saveStorage();
     }
 
     @EventHandler
@@ -855,10 +853,52 @@ public class MenuModule implements AddonModule, Listener {
     // 落盘：menu-results.yml / player-stats.yml
     // ------------------------------------------------------------------
 
-    private void loadResults() {
+    /** 载入 data/stats.yml（比赛结果 / 历史 / 生涯都在里面）。 */
+    private void loadStorage() {
         lastResults.clear();
-        if (resultsFile == null || !resultsFile.isFile()) return;
-        YamlConfiguration yaml = YamlConfiguration.loadConfiguration(resultsFile);
+        history.clear();
+        stats.clear();
+        if (storageFile == null || !storageFile.isFile()) return;
+        YamlConfiguration yaml = YamlConfiguration.loadConfiguration(storageFile);
+        readResults(yaml);
+        readStats(yaml);
+    }
+
+    /**
+     * 旧版本把数据拆成 menu-results.yml 和 player-stats.yml 放在插件根目录。
+     * 这里一次性合并进 data/stats.yml，并把旧文件改名成 .bak 留个底。
+     */
+    private void migrateLegacyFiles() {
+        File legacyResults = new File(plugin.getDataFolder(), "menu-results.yml");
+        File legacyStats = new File(plugin.getDataFolder(), "player-stats.yml");
+        if (!legacyResults.isFile() && !legacyStats.isFile()) return;
+        if (storageFile != null && storageFile.isFile()) return;
+
+        if (legacyResults.isFile()) {
+            readResults(YamlConfiguration.loadConfiguration(legacyResults));
+        }
+        if (legacyStats.isFile()) {
+            readStats(YamlConfiguration.loadConfiguration(legacyStats));
+        }
+        saveStorage();
+        backupLegacy(legacyResults);
+        backupLegacy(legacyStats);
+        plugin.getLogger().info("已把旧数据合并到 data/stats.yml（原文件改名 .bak 保留）。");
+    }
+
+    private void backupLegacy(File file) {
+        if (file == null || !file.isFile()) return;
+        try {
+            // 备份也放进 data/，根目录只留配置
+            java.nio.file.Files.move(file.toPath(),
+                    new File(plugin.getDataDir(), file.getName() + ".bak").toPath(),
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        } catch (Throwable ignored) {
+            // 备份失败不影响主流程
+        }
+    }
+
+    private void readResults(YamlConfiguration yaml) {
         ConfigurationSection section = yaml.getConfigurationSection("results");
         if (section == null) return;
         for (String id : section.getKeys(false)) {
@@ -895,15 +935,27 @@ public class MenuModule implements AddonModule, Listener {
         return o instanceof Number n ? n.longValue() : 0L;
     }
 
-    private void saveResults() {
-        if (resultsFile == null) return;
+    /** 把比赛结果 / 历史 / 生涯一起写回 data/stats.yml。 */
+    private void saveStorage() {
+        if (storageFile == null) return;
         // 防御：内存里什么都没有、磁盘上却有内容时，绝不覆盖。
         // 之前 /wbdaddon reload 在半路抛错，模块被卸载了两次，
         // 第二次 onDisable 从已清空的内存里写出空文件，把历史记录洗掉了。
-        if (lastResults.isEmpty() && history.isEmpty() && fileHasData(resultsFile)) {
+        if (lastResults.isEmpty() && history.isEmpty() && stats.isEmpty()
+                && fileHasData(storageFile)) {
             return;
         }
         YamlConfiguration yaml = new YamlConfiguration();
+        writeResults(yaml);
+        writeStats(yaml);
+        try {
+            yaml.save(storageFile);
+        } catch (IOException e) {
+            plugin.getLogger().warning("保存 data/stats.yml 失败：" + e.getMessage());
+        }
+    }
+
+    private void writeResults(YamlConfiguration yaml) {
         for (Map.Entry<String, LastResult> entry : lastResults.entrySet()) {
             String base = "results." + entry.getKey();
             yaml.set(base + ".winner", entry.getValue().winner());
@@ -934,18 +986,9 @@ public class MenuModule implements AddonModule, Listener {
             out.add(m);
         }
         yaml.set("history", out);
-
-        try {
-            yaml.save(resultsFile);
-        } catch (IOException e) {
-            plugin.getLogger().warning("保存 menu-results.yml 失败：" + e.getMessage());
-        }
     }
 
-    private void loadStats() {
-        stats.clear();
-        if (statsFile == null || !statsFile.isFile()) return;
-        YamlConfiguration yaml = YamlConfiguration.loadConfiguration(statsFile);
+    private void readStats(YamlConfiguration yaml) {
         ConfigurationSection section = yaml.getConfigurationSection("players");
         if (section == null) return;
         for (String key : section.getKeys(false)) {
@@ -966,12 +1009,7 @@ public class MenuModule implements AddonModule, Listener {
         }
     }
 
-    private void saveStats() {
-        if (statsFile == null) return;
-        if (stats.isEmpty() && fileHasData(statsFile)) {
-            return;
-        }
-        YamlConfiguration yaml = new YamlConfiguration();
+    private void writeStats(YamlConfiguration yaml) {
         for (Map.Entry<UUID, Stats> entry : stats.entrySet()) {
             String base = "players." + entry.getKey();
             Stats s = entry.getValue();
@@ -982,11 +1020,6 @@ public class MenuModule implements AddonModule, Listener {
             yaml.set(base + ".defuses", s.defuses);
             yaml.set(base + ".matches", s.matches);
             yaml.set(base + ".wins", s.wins);
-        }
-        try {
-            yaml.save(statsFile);
-        } catch (IOException e) {
-            plugin.getLogger().warning("保存 player-stats.yml 失败：" + e.getMessage());
         }
     }
 
