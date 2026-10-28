@@ -22,6 +22,7 @@ import alphahu.wbdaddon.module.PositionBackupModule;
 import alphahu.wbdaddon.module.ReconnectModule;
 import alphahu.wbdaddon.module.RoundEventsModule;
 import alphahu.wbdaddon.module.RoundSummaryModule;
+import alphahu.wbdaddon.module.ShortHandedCompensationModule;
 import alphahu.wbdaddon.module.TeamArmorModule;
 import alphahu.wbdaddon.module.TechnicalPauseModule;
 import alphahu.wbdaddon.module.VoteModule;
@@ -155,6 +156,7 @@ public final class WBDAddon extends JavaPlugin {
         moduleManager.register(new TechnicalPauseModule(this));
         moduleManager.register(new VoteModule(this));
         moduleManager.register(new ReconnectModule(this));
+        moduleManager.register(new ShortHandedCompensationModule(this));
         moduleManager.register(new JourneyMapModule(this));
 
         // 5. 启用所有模块

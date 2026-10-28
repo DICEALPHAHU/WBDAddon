@@ -6,6 +6,7 @@ import alphahu.wbdaddon.mode.BombDefuseMode;
 import alphahu.wbdaddon.storage.StatsStore;
 import alphahu.wbdaddon.util.ArenaAdmin;
 import com.warz.bombdefuse.api.WbdMatchEndEvent;
+import com.warz.bombdefuse.api.WbdPlayerJoinArenaEvent;
 import com.warz.bombdefuse.api.WbdPlayerLeaveArenaEvent;
 import com.warz.bombdefuse.api.WbdRoundStartEvent;
 import com.warz.bombdefuse.arena.ArenaSession;
@@ -82,6 +83,9 @@ public class MenuModule implements AddonModule, Listener {
 
     /** 玩家生涯统计（跨比赛累计）。 */
     private final Map<UUID, Stats> stats = new ConcurrentHashMap<>();
+
+    /** 处于「单人测试模式」的竞技场：回合不会自动结算，需手动强制结算。 */
+    private final Set<String> testArenas = ConcurrentHashMap.newKeySet();
 
     /** 当前这场比赛已经计入过的玩家，避免离场和比赛结束重复累加。 */
     private final Map<String, Set<UUID>> counted = new ConcurrentHashMap<>();
@@ -379,25 +383,31 @@ public class MenuModule implements AddonModule, Listener {
             return;
         }
 
-        // 两边都得有人：只要有一边是 0 人，回合一开始就会被判负
-        // （T 全灭 / CT 全灭的判定），白送一个胜场，所以直接拦住
+        // 有一边是 0 人时，WBD 会在回合开始就按「某队全灭」判负。
+        // 一个人测试时正是这种情形，所以改成「锁住回合结算」的测试模式，
+        // 让回合一直进行，由管理员手动决定胜负。
         int tCount = teamCount(session, Team.T);
         int ctCount = teamCount(session, Team.CT);
-        if (tCount == 0 || ctCount == 0) {
-            admin.sendMessage(color("&c开局取消：T / CT 有一边没人（&fT " + tCount
-                    + " &7/ &fCT " + ctCount + "&c），开打会立刻判这一边输。"));
-            admin.sendMessage(color("&7先让两边都有人：&f/wbd join "
-                    + session.getConfig().getId() + " t&7 或 &fct&7，或让玩家自己选阵营。"));
-            return;
-        }
+        boolean testMode = tCount == 0 || ctCount == 0;
 
         // 倒计时压到 1 秒，跳过大厅等待
-        if (ArenaAdmin.forceStart(session, 20, plugin.getLogger())) {
-            admin.closeInventory();
+        if (!ArenaAdmin.forceStart(session, 20, plugin.getLogger())) {
+            admin.sendMessage(color("&c强制开局失败（可能是 WBD 版本差异）。"));
+            return;
+        }
+        admin.closeInventory();
+
+        if (testMode) {
+            testArenas.add(session.getConfig().getId());
+            ArenaAdmin.setRoundLocked(session, true, plugin.getLogger());
+            admin.sendMessage(color("&a已强制开局：&f" + session.getConfig().getId()
+                    + " &7(T " + tCount + " / CT " + ctCount + ")"));
+            admin.sendMessage(color("&e已进入单人测试模式：&7回合不会自动结束，"
+                    + "也不会因为对面没人判负；要结算请用面板的「强制胜利 / 失败」。"));
+            admin.sendMessage(color("&7有第二名玩家进场后会自动退出测试模式。"));
+        } else {
             admin.sendMessage(color("&a已强制开局：&f" + session.getConfig().getId()
                     + " &7(" + session.getPlayers().size() + " 人)"));
-        } else {
-            admin.sendMessage(color("&c强制开局失败（可能是 WBD 版本差异）。"));
         }
     }
 
@@ -612,6 +622,14 @@ public class MenuModule implements AddonModule, Listener {
 
         inventory.setItem(16, item(Material.CHEST, "&e数据管理",
                 "&7清除玩家生涯数据 / 比赛记录"));
+
+        String arena = arenaOf(player);
+        if (arena != null && testArenas.contains(arena)) {
+            inventory.setItem(20, item(Material.REDSTONE_TORCH, "&e单人测试模式：开启",
+                    "&7这张图不会自动结算回合",
+                    "&7有第二名玩家进场后自动关闭"));
+        }
+
         inventory.setItem(22, item(Material.ARROW, "&7返回主菜单"));
     }
 
@@ -1006,6 +1024,7 @@ public class MenuModule implements AddonModule, Listener {
 
     @EventHandler
     public void onMatchEnd(WbdMatchEndEvent event) {
+        testArenas.remove(event.getArenaId());
         Team winner = event.getWinner();
         String winnerName = winner == null ? "无" : winner.name();
         lastResults.put(event.getArenaId(),
@@ -1061,6 +1080,48 @@ public class MenuModule implements AddonModule, Listener {
         if (event.getRound() <= 1) {
             counted.remove(event.getArenaId());
         }
+        // 测试模式：WBD 在 startRound 里会把 roundEndingLocked 置回 false，
+        // 这里再锁一次，保证单人测试时回合不会瞬间判负
+        if (testArenas.contains(event.getArenaId())) {
+            ArenaAdmin.setRoundLocked(session(event.getArenaId()), true, plugin.getLogger());
+        }
+    }
+
+    /** 第二名玩家进场就退出单人测试模式，恢复正常判定。 */
+    @EventHandler
+    public void onArenaJoin(WbdPlayerJoinArenaEvent event) {
+        String arenaId = event.getArenaId();
+        if (!testArenas.contains(arenaId)) return;
+        ArenaSession session = session(arenaId);
+        if (session == null) return;
+        int playing = 0;
+        for (PlayerRecord record : session.getPlayers()) {
+            if (record.getTeam() == Team.T || record.getTeam() == Team.CT) {
+                playing++;
+            }
+        }
+        if (playing < 2) return;
+
+        testArenas.remove(arenaId);
+        ArenaAdmin.setRoundLocked(session, false, plugin.getLogger());
+        Player admin = Bukkit.getPlayer(event.getPlayer().getUniqueId());
+        broadcastArena(arenaId, "&e已有第二名玩家进场，单人测试模式结束，回合判定恢复正常。");
+    }
+
+    private void broadcastArena(String arenaId, String message) {
+        String text = color(message);
+        for (Player player : Bukkit.getOnlinePlayers()) {
+            if (arenaId.equals(arenaOf(player))) {
+                player.sendMessage(text);
+            }
+        }
+    }
+
+    private String arenaOf(Player player) {
+        if (plugin.getApi() == null) return null;
+        AddonMode mode = plugin.getApi().getModeFor(player);
+        if (mode == null || !BombDefuseMode.MODE_ID.equals(mode.getModeId())) return null;
+        return mode.getArenaId(player);
     }
 
     private void addStats(PlayerRecord record, boolean countMatch, Team winner) {

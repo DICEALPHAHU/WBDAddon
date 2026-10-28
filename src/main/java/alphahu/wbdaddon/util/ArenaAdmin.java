@@ -30,6 +30,7 @@ public final class ArenaAdmin {
     private static Method startCountdownMethod;
     private static Method endRoundMethod;
     private static Field stateTicksField;
+    private static Field roundLockField;
     private static boolean resolved;
 
     private ArenaAdmin() {
@@ -58,6 +59,12 @@ public final class ArenaAdmin {
             stateTicksField.setAccessible(true);
         } catch (Throwable t) {
             stateTicksField = null;
+        }
+        try {
+            roundLockField = ArenaSession.class.getDeclaredField("roundEndingLocked");
+            roundLockField.setAccessible(true);
+        } catch (Throwable t) {
+            roundLockField = null;
         }
     }
 
@@ -103,11 +110,47 @@ public final class ArenaAdmin {
         if (state != GameState.LIVE && state != GameState.FREEZE) {
             return false;
         }
+        // 单人测试时回合被锁住，结算前临时松开
+        boolean wasLocked = isRoundLocked(session);
+        if (wasLocked) {
+            setRoundLocked(session, false, logger);
+        }
         try {
             endRoundMethod.invoke(session, winner, RoundEndReason.ADMIN);
             return true;
         } catch (Throwable t) {
             logger.warning("管理面板：强制结算失败：" + t);
+            return false;
+        }
+    }
+
+    /**
+     * 锁 / 解锁「回合自动结算」。
+     *
+     * <p>WBD 在 {@code startRound} 里会把 {@code roundEndingLocked} 置回 false，
+     * {@code endRound} 开头见到它为 true 就直接返回。单人测试时锁上它，
+     * 回合就不会因为「某队人数为 0」瞬间判负，也不会因为计时结束自动结算。
+     *
+     * @return 是否设置成功
+     */
+    public static boolean setRoundLocked(ArenaSession session, boolean locked, Logger logger) {
+        if (session == null) return false;
+        resolve(logger);
+        if (roundLockField == null) return false;
+        try {
+            roundLockField.setBoolean(session, locked);
+            return true;
+        } catch (Throwable t) {
+            logger.warning("管理面板：设置回合锁失败：" + t);
+            return false;
+        }
+    }
+
+    public static boolean isRoundLocked(ArenaSession session) {
+        if (session == null || roundLockField == null) return false;
+        try {
+            return roundLockField.getBoolean(session);
+        } catch (Throwable t) {
             return false;
         }
     }
