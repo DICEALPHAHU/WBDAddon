@@ -496,6 +496,11 @@ modules:
       melee: 1
       throwable: 4
 
+    # 给识别过的装备打 WBDAddon 分类标签（PDC: loadout）。
+    # 分类只认一次：之后换 TacZ 版本、改 gun-overrides 都不会让已经发出去的
+    # 武器忽然换类别。认错了用 /wbdaddon retag 洗掉重认。
+    tag-items: true
+
     # 刀不要钱：买刀（同类近战）时直接把手里的那把换掉，
     # 不做「同款拦截」，也不退旧刀的钱，省得背包里堆一堆旧刀。
     melee-always-swap: true

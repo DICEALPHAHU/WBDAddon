@@ -4,6 +4,7 @@ import alphahu.wbdaddon.WBDAddon;
 import alphahu.wbdaddon.api.AddonMode;
 import alphahu.wbdaddon.module.AddonModule;
 import alphahu.wbdaddon.module.BombDefuseSoundModule;
+import alphahu.wbdaddon.module.LoadoutGuardModule;
 import alphahu.wbdaddon.module.TechnicalPauseModule;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
@@ -39,7 +40,7 @@ public class WBDAddonCommand implements CommandExecutor, TabCompleter {
     private final WBDAddon plugin;
 
     private static final List<String> SUB_COMMANDS =
-            Arrays.asList("help", "reload", "modules", "modes", "sound", "pause", "resume");
+            Arrays.asList("help", "reload", "modules", "modes", "sound", "pause", "resume", "retag");
 
     public WBDAddonCommand(WBDAddon plugin) {
         this.plugin = plugin;
@@ -118,6 +119,8 @@ public class WBDAddonCommand implements CommandExecutor, TabCompleter {
                 module.requestAdminResume(sender, args.length >= 2 ? args[1] : null);
             }
 
+            case "retag" -> retag(sender, args);
+
             default -> sender.sendMessage(color("&c未知子命令。使用 /wbdaddon help 查看帮助。"));
         }
 
@@ -133,8 +136,46 @@ public class WBDAddonCommand implements CommandExecutor, TabCompleter {
         sender.sendMessage(color("&e/wbdaddon sound &7- 试听拆弹提示音效"));
         sender.sendMessage(color("&e/wbdaddon pause [竞技场] [秒数] &7- 技术暂停（管理员）"));
         sender.sendMessage(color("&e/wbdaddon resume [竞技场] &7- 恢复比赛（管理员）"));
+        sender.sendMessage(color("&e/wbdaddon retag [玩家] &7- 重打装备分类标签"));
         sender.sendMessage(color("&e/pause &7- 玩家请求技术暂停（每队每场限次）"));
         sender.sendMessage(color("&6=========================="));
+    }
+
+    /**
+     * {@code /wbdaddon retag [玩家]}：清掉背包里的分类标签并重新分类。
+     *
+     * <p>装备槽守卫把分类结果写成 PDC 标签存在物品上，认错一次就会一直错；
+     * 这个命令用来把标签洗掉重认（比如补了 `gun-overrides` 之后）。
+     */
+    private void retag(CommandSender sender, String[] args) {
+        Player target;
+        if (args.length >= 2) {
+            if (!sender.hasPermission("wbdaddon.admin")) {
+                sender.sendMessage(color("&c你没有权限重打其他玩家的标签。"));
+                return;
+            }
+            target = Bukkit.getPlayerExact(args[1]);
+            if (target == null) {
+                sender.sendMessage(color("&c找不到在线玩家 &e" + args[1] + "&c。"));
+                return;
+            }
+        } else if (sender instanceof Player player) {
+            target = player;
+        } else {
+            sender.sendMessage(color("&c控制台需要指定玩家：/wbdaddon retag <玩家>"));
+            return;
+        }
+
+        AddonModule module = plugin.getModuleManager().getModule("loadout-guard");
+        if (!(module instanceof LoadoutGuardModule loadout)
+                || !plugin.getModuleManager().isEnabled(module)) {
+            sender.sendMessage(color("&c装备槽守卫模块未启用。"));
+            return;
+        }
+
+        int cleared = loadout.retag(target);
+        sender.sendMessage(color("&a已清除 &e" + cleared + " &a件物品的分类标签，并重新分类：&f"
+                + target.getName()));
     }
 
     private TechnicalPauseModule pauseModule() {

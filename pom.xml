@@ -6,7 +6,7 @@
 
     <groupId>alphahu</groupId>
     <artifactId>WBDAddon</artifactId>
-    <version>1.8.0</version>
+    <version>1.9.0</version>
     <packaging>jar</packaging>
 
     <name>WBDAddon</name>

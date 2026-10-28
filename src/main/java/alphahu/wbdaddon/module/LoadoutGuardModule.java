@@ -20,6 +20,7 @@ import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.Location;
 import org.bukkit.Material;
+import org.bukkit.NamespacedKey;
 import org.bukkit.entity.Item;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
@@ -37,6 +38,8 @@ import org.bukkit.event.player.PlayerRespawnEvent;
 import org.bukkit.event.player.PlayerSwapHandItemsEvent;
 import org.bukkit.event.player.PlayerToggleSneakEvent;
 import org.bukkit.inventory.ItemStack;
+import org.bukkit.inventory.meta.ItemMeta;
+import org.bukkit.persistence.PersistentDataType;
 import org.bukkit.inventory.PlayerInventory;
 import org.bukkit.scheduler.BukkitTask;
 
@@ -143,6 +146,11 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
     private boolean refundOldWeapon = true;
     /** 刀不要钱：买刀时直接换掉手里那把，不做同款拦截、也不退旧刀。 */
     private boolean meleeAlwaysSwap = true;
+    /** 给经过分类的物品打 WBDAddon 标签，之后不再靠 TacZ 类型猜。 */
+    private boolean tagItems = true;
+
+    /** 物品分类标签的键（PDC）：primary / secondary / melee / throwable / utility。 */
+    private final NamespacedKey tagKey;
     private boolean dropDuplicates = true;
     private boolean purchaseSafety = true;
     private boolean protectOpenItem = true;
@@ -169,6 +177,7 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
 
     public LoadoutGuardModule(WBDAddon plugin) {
         this.plugin = plugin;
+        this.tagKey = new NamespacedKey(plugin, "loadout");
     }
 
     // ------------------------------------------------------------------
@@ -303,6 +312,7 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
 
         this.refundOldWeapon = plugin.getConfig().getBoolean(base + "refund-old-weapon", true);
         this.meleeAlwaysSwap = plugin.getConfig().getBoolean(base + "melee-always-swap", true);
+        this.tagItems = plugin.getConfig().getBoolean(base + "tag-items", true);
         this.dropDuplicates = plugin.getConfig().getBoolean(base + "drop-duplicates", true);
         this.purchaseSafety = plugin.getConfig().getBoolean(base + "purchase-safety", true);
         this.protectOpenItem = plugin.getConfig().getBoolean(base + "protect-open-item", true);
@@ -477,6 +487,11 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
     private Category classify(ItemStack item) {
         if (item == null || item.getType().isAir()) return Category.NONE;
 
+        // 打过标签的直接信标签：这是「分类结果」而不是「每次现猜」，
+        // 换 TacZ 版本、改 gun-overrides 都不会让已经发出去的武器忽然换类别
+        Category tagged = readTag(item);
+        if (tagged != null) return tagged;
+
         WarZBombDefusePlugin wbd = plugin.getWbd();
         if (wbd != null) {
             String marker = ItemUtil.getMarker(item, wbd);
@@ -515,6 +530,81 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
         Category resolved = resolveGunCategory(api, gunId);
         gunCategoryCache.put(gunId, resolved);
         return resolved;
+    }
+
+    /** 读取物品上的 WBDAddon 分类标签；没有或无效返回 null。 */
+    private Category readTag(ItemStack item) {
+        if (!tagItems || item == null || item.getType().isAir()) return null;
+        ItemMeta meta = item.getItemMeta();
+        if (meta == null) return null;
+        String raw = meta.getPersistentDataContainer()
+                .get(tagKey, PersistentDataType.STRING);
+        if (raw == null) return null;
+        try {
+            return Category.valueOf(raw);
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+    }
+
+    /** 给物品打分类标签，已经一致就不动它；返回是否真的改了。 */
+    private boolean tagItem(ItemStack item, Category category) {
+        if (!tagItems || item == null || item.getType().isAir()
+                || category == null || category == Category.NONE) {
+            return false;
+        }
+        ItemMeta meta = item.getItemMeta();
+        if (meta == null) return false;
+        String want = category.name();
+        String now = meta.getPersistentDataContainer()
+                .get(tagKey, PersistentDataType.STRING);
+        if (want.equals(now)) return false;
+        meta.getPersistentDataContainer().set(tagKey, PersistentDataType.STRING, want);
+        item.setItemMeta(meta);
+        return true;
+    }
+
+    private boolean clearTag(ItemStack item) {
+        if (item == null || item.getType().isAir()) return false;
+        ItemMeta meta = item.getItemMeta();
+        if (meta == null) return false;
+        if (!meta.getPersistentDataContainer().has(tagKey, PersistentDataType.STRING)) {
+            return false;
+        }
+        meta.getPersistentDataContainer().remove(tagKey);
+        item.setItemMeta(meta);
+        return true;
+    }
+
+    // ------------------------------------------------------------------
+    // 标签重建
+    // ------------------------------------------------------------------
+
+    /**
+     * 清掉该玩家背包里的 WBDAddon 分类标签并重新分类。
+     *
+     * <p>标签是「认一次就固定」的，万一把某把枪认错了（比如先打了标签、
+     * 之后才在 `gun-overrides` 里补规则），用它把标签洗掉重认。
+     *
+     * @return 清掉标签的物品数量
+     */
+    public int retag(Player player) {
+        PlayerInventory inventory = player.getInventory();
+        int cleared = 0;
+        for (int slot = 0; slot < STORAGE_SIZE; slot++) {
+            ItemStack item = inventory.getItem(slot);
+            if (clearTag(item)) {
+                setItemAt(inventory, slot, item);
+                cleared++;
+            }
+        }
+        ItemStack offhand = inventory.getItemInOffHand();
+        if (clearTag(offhand)) {
+            setItemAt(inventory, OFFHAND_SLOT, offhand);
+            cleared++;
+        }
+        normalize(player);
+        return cleared;
     }
 
     private Category resolveGunCategory(TacZSpigotApi api, String gunId) {
@@ -619,12 +709,20 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
         PlayerInventory inventory = player.getInventory();
         for (int slot = 0; slot < STORAGE_SIZE; slot++) {
             ItemStack item = inventory.getItem(slot);
-            if (classify(item) == category) {
+            Category actual = classify(item);
+            if (actual == category) {
+                if (tagItem(item, actual)) {
+                    setItemAt(inventory, slot, item);
+                }
                 result.add(new SlotItem(slot, item));
             }
         }
         ItemStack offhand = inventory.getItemInOffHand();
-        if (classify(offhand) == category) {
+        Category offhandCategory = classify(offhand);
+        if (offhandCategory == category) {
+            if (tagItem(offhand, offhandCategory)) {
+                setItemAt(inventory, OFFHAND_SLOT, offhand);
+            }
             result.add(new SlotItem(OFFHAND_SLOT, offhand));
         }
         return result;
