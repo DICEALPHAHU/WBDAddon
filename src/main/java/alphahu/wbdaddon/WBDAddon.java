@@ -112,8 +112,9 @@ public final class WBDAddon extends JavaPlugin {
 
         instance = this;
 
-        // 1. 加载配置
+        // 1. 加载配置，顺手把配置说明释放到插件目录（只放一次，不覆盖玩家改过的版本）
         saveDefaultConfig();
+        saveGuide();
         reloadConfig();
 
         // 2. 获取 WarZBombDefuse 实例
@@ -264,6 +265,22 @@ public final class WBDAddon extends JavaPlugin {
         VoteCommand executor = new VoteCommand(this, action);
         command.setExecutor(executor);
         command.setTabCompleter(executor);
+    }
+
+    /**
+     * 把随插件打包的《配置说明》释放到插件目录。
+     *
+     * <p>只在这一份不存在时写，之后玩家自己改过也不会被覆盖；
+     * 想重新拿到原版把文件删掉重启即可。
+     */
+    private void saveGuide() {
+        try {
+            if (!new java.io.File(getDataFolder(), "配置说明.md").exists()) {
+                saveResource("配置说明.md", false);
+            }
+        } catch (Throwable t) {
+            getLogger().warning("释放配置说明失败：" + t);
+        }
     }
 
     /**

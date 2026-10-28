@@ -4,6 +4,8 @@ WarZBombDefuse 的第三方附加组件合集 —— 击杀报告 / 单人伤害
 
 每个功能都是独立模块，通过 `config.yml` 单独开关，互不影响。无需改动 WBD 本体，纯附加。
 
+> 📘 **完整配置说明**见 [配置说明.md](src/main/resources/配置说明.md)，插件首次启动也会把它释放到 `plugins/WBDAddon/配置说明.md`。换服务器前请先核对「必须核对的几处」（武器分类 / 商品落点 / 内部字段反射）。
+
 > 已在 **Arclight 1.20.1**（Forge + Bukkit 混合端）环境实测运行。
 
 > 🆕 **自 1.2.1 起，本插件对外暴露 `WbdAddonApi`。** 第三方游戏模式（例如 [WBDTeamDeathmatch](https://github.com/DICEALPHAHU/WBDTeamDeathMatch) 团队死斗）可以实现 `AddonMode` 注册进来，从而直接复用本插件的饥饿锁定、JourneyMap 桥接等功能，并共享同一套伤害账本与枪械名解析。详见 [对外 API](#对外-api)。
