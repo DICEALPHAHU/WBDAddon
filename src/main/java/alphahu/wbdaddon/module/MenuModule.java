@@ -4,6 +4,7 @@ import alphahu.wbdaddon.WBDAddon;
 import alphahu.wbdaddon.api.AddonMode;
 import alphahu.wbdaddon.mode.BombDefuseMode;
 import alphahu.wbdaddon.storage.StatsStore;
+import alphahu.wbdaddon.util.ArenaAdmin;
 import com.warz.bombdefuse.api.WbdMatchEndEvent;
 import com.warz.bombdefuse.api.WbdPlayerLeaveArenaEvent;
 import com.warz.bombdefuse.api.WbdRoundStartEvent;
@@ -164,6 +165,11 @@ public class MenuModule implements AddonModule, Listener {
         open(player, Screen.MAIN, null, null);
     }
 
+    /** 管理员面板入口（/wbdaddon admin）。 */
+    public void openAdmin(Player player) {
+        open(player, Screen.ADMIN, null, null);
+    }
+
     /**
      * Shift + F 打开主菜单。
      *
@@ -197,10 +203,11 @@ public class MenuModule implements AddonModule, Listener {
                 || !event.getClickedInventory().equals(top)) {
             return;
         }
-        handle(player, holder, event.getSlot());
+        handle(player, holder, event.getSlot(), event);
     }
 
-    private void handle(Player player, MenuHolder holder, int slot) {
+    private void handle(Player player, MenuHolder holder, int slot,
+                        InventoryClickEvent clickEvent) {
         switch (holder.screen) {
             case MAIN -> {
                 if (slot == 11) {
@@ -285,6 +292,132 @@ public class MenuModule implements AddonModule, Listener {
                     open(player, Screen.MAIN, null, null);
                 }
             }
+            case ADMIN -> {
+                if (slot == 10) {
+                    open(player, Screen.ADMIN_MAPS, null, null);
+                } else if (slot == 12) {
+                    forceRound(player, true);
+                } else if (slot == 14) {
+                    forceRound(player, false);
+                } else if (slot == 16) {
+                    open(player, Screen.ADMIN_DATA, null, null);
+                } else if (slot == 22) {
+                    open(player, Screen.MAIN, null, null);
+                }
+            }
+            case ADMIN_MAPS -> {
+                if (slot == 49) {
+                    open(player, Screen.ADMIN, null, null);
+                    return;
+                }
+                if (slot >= 45) return;
+                java.util.List<ArenaSession> sessions = arenaList();
+                if (slot < sessions.size()) {
+                    forceStart(player, sessions.get(slot));
+                }
+            }
+            case ADMIN_DATA -> {
+                if (slot == 11) {
+                    open(player, Screen.ADMIN_PLAYERS, null, null);
+                } else if (slot == 15) {
+                    open(player, Screen.ADMIN_MATCHES, null, null);
+                } else if (slot == 22) {
+                    open(player, Screen.ADMIN, null, null);
+                }
+            }
+            case ADMIN_PLAYERS -> {
+                if (slot == 49) {
+                    open(player, Screen.ADMIN_DATA, null, null);
+                    return;
+                }
+                if (slot >= 45) return;
+                java.util.List<Player> targets = adminPlayerList();
+                if (slot >= targets.size()) return;
+                Player target = targets.get(slot);
+                if (!clickEvent.isShiftClick()) {
+                    player.sendMessage(color("&7要清除 &f" + target.getName()
+                            + " &7的生涯数据，请 &cShift + 左键&7。"));
+                    return;
+                }
+                clearPlayerData(player, target);
+                open(player, Screen.ADMIN_PLAYERS, null, null);
+            }
+            case ADMIN_MATCHES -> {
+                if (slot == 49) {
+                    open(player, Screen.ADMIN_DATA, null, null);
+                    return;
+                }
+                if (slot >= 45 || slot >= history.size()) return;
+                if (!clickEvent.isShiftClick()) {
+                    player.sendMessage(color("&7要删除这条比赛记录，请 &cShift + 左键&7。"));
+                    return;
+                }
+                MatchRecord record = history.get(slot);
+                history.remove(slot);
+                saveStorage();
+                player.sendMessage(color("&a已删除比赛记录：&f" + record.arenaId()
+                        + " &7(" + record.tScore() + ":" + record.ctScore() + ")"));
+                open(player, Screen.ADMIN_MATCHES, null, null);
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // 管理员动作
+    // ------------------------------------------------------------------
+
+    private void forceStart(Player admin, ArenaSession session) {
+        if (session == null) return;
+        GameState state = session.getState();
+        if (state != GameState.WAITING && state != GameState.COUNTDOWN) {
+            admin.sendMessage(color("&c该竞技场当前是「" + ArenaAdmin.stateName(state)
+                    + "」，不能强制开局。"));
+            return;
+        }
+        if (session.getPlayers().isEmpty()) {
+            admin.sendMessage(color("&c该竞技场里一个人都没有，先让人进去。"));
+            return;
+        }
+        // 倒计时压到 1 秒，跳过大厅等待
+        if (ArenaAdmin.forceStart(session, 20, plugin.getLogger())) {
+            admin.closeInventory();
+            admin.sendMessage(color("&a已强制开局：&f" + session.getConfig().getId()
+                    + " &7(" + session.getPlayers().size() + " 人)"));
+        } else {
+            admin.sendMessage(color("&c强制开局失败（可能是 WBD 版本差异）。"));
+        }
+    }
+
+    private void forceRound(Player admin, boolean win) {
+        ArenaSession session = sessionOf(admin);
+        if (session == null) {
+            admin.sendMessage(color("&c你不在任何竞技场里。"));
+            return;
+        }
+        Team team = session.getTeam(admin);
+        if (team != Team.T && team != Team.CT) {
+            admin.sendMessage(color("&c你不在任何一方阵营，无法按阵营判定胜负。"));
+            return;
+        }
+        Team winner = win ? team : team.opposite();
+        if (ArenaAdmin.forceEndRound(session, winner, plugin.getLogger())) {
+            admin.closeInventory();
+            admin.sendMessage(color("&a已强制结算本回合：&f" + teamLabel(winner) + " &a胜利"));
+        } else {
+            admin.sendMessage(color("&c强制结算失败（当前不在回合进行中）。"));
+        }
+    }
+
+    private void clearPlayerData(Player admin, Player target) {
+        Stats removed = stats.remove(target.getUniqueId());
+        counted.values().forEach(set -> set.remove(target.getUniqueId()));
+        saveStorage();
+        if (removed == null) {
+            admin.sendMessage(color("&7" + target.getName() + " 本来就没有生涯数据。"));
+        } else {
+            admin.sendMessage(color("&a已清除 &f" + target.getName() + " &a的生涯数据（"
+                    + removed.kills + "/" + removed.deaths + "，"
+                    + removed.matches + " 场）。"));
         }
     }
 
@@ -306,8 +439,10 @@ public class MenuModule implements AddonModule, Listener {
     }
 
     private int size(Screen screen) {
-        return screen == Screen.ROOMS || screen == Screen.ACTIVE
-                || screen == Screen.SUMMARY || screen == Screen.MATCH ? 54 : 27;
+        return switch (screen) {
+            case ROOMS, ACTIVE, SUMMARY, MATCH, ADMIN_MAPS, ADMIN_PLAYERS, ADMIN_MATCHES -> 54;
+            default -> 27;
+        };
     }
 
     private String title(Screen screen, String modeId) {
@@ -322,6 +457,11 @@ public class MenuModule implements AddonModule, Listener {
             case SUMMARY -> "&8比赛总结";
             case MATCH -> "&8比赛详情";
             case PROFILE -> "&8个人资料";
+            case ADMIN -> "&8管理面板";
+            case ADMIN_MAPS -> "&8管理 - 强制开局";
+            case ADMIN_DATA -> "&8管理 - 数据管理";
+            case ADMIN_PLAYERS -> "&8管理 - 清除玩家数据";
+            case ADMIN_MATCHES -> "&8管理 - 清除比赛记录";
         };
     }
 
@@ -409,7 +549,122 @@ public class MenuModule implements AddonModule, Listener {
             }
             case MATCH -> renderMatch(inventory, holder);
             case PROFILE -> renderProfile(inventory, player);
+            case ADMIN -> renderAdmin(inventory, player);
+            case ADMIN_MAPS -> renderAdminMaps(inventory);
+            case ADMIN_DATA -> {
+                inventory.setItem(11, item(Material.PLAYER_HEAD, "&e清除玩家数据",
+                        "&7清掉某名玩家的生涯数据",
+                        "&7（K/D、下包拆包、场次、胜场）"));
+                inventory.setItem(15, item(Material.BOOK, "&e清除比赛记录",
+                        "&7从比赛历史里删掉某一场"));
+                inventory.setItem(22, item(Material.ARROW, "&7返回"));
+            }
+            case ADMIN_PLAYERS -> renderAdminPlayers(inventory);
+            case ADMIN_MATCHES -> renderAdminMatches(inventory);
         }
+    }
+
+    // ------------------------------------------------------------------
+    // 管理面板
+    // ------------------------------------------------------------------
+
+    private void renderAdmin(Inventory inventory, Player player) {
+        inventory.setItem(10, item(Material.MAP, "&e强制开局",
+                "&7选一张地图，立刻开战",
+                "&7跳过大厅等待，倒计时压到 1 秒"));
+
+        ArenaSession session = sessionOf(player);
+        Team team = session == null ? null : session.getTeam(player);
+        if (team == Team.T || team == Team.CT) {
+            inventory.setItem(12, item(Material.LIME_WOOL, "&a本回合强制胜利",
+                    "&7按你所在阵营判定：&f" + teamLabel(team) + " &7胜",
+                    "&7当前状态：&f" + ArenaAdmin.stateName(session.getState())));
+            inventory.setItem(14, item(Material.RED_WOOL, "&c本回合强制失败",
+                    "&7按你所在阵营判定：&f" + teamLabel(team.opposite()) + " &7胜",
+                    "&7当前状态：&f" + ArenaAdmin.stateName(session.getState())));
+        } else {
+            inventory.setItem(12, item(Material.GRAY_WOOL, "&7本回合强制胜利",
+                    "&c你不在比赛中，无法按阵营判定"));
+            inventory.setItem(14, item(Material.GRAY_WOOL, "&7本回合强制失败",
+                    "&c你不在比赛中，无法按阵营判定"));
+        }
+
+        inventory.setItem(16, item(Material.CHEST, "&e数据管理",
+                "&7清除玩家生涯数据 / 比赛记录"));
+        inventory.setItem(22, item(Material.ARROW, "&7返回主菜单"));
+    }
+
+    private void renderAdminMaps(Inventory inventory) {
+        java.util.List<ArenaSession> sessions = arenaList();
+        for (int i = 0; i < sessions.size() && i < 45; i++) {
+            ArenaSession session = sessions.get(i);
+            GameState state = session.getState();
+            String hint = state == GameState.WAITING || state == GameState.COUNTDOWN
+                    ? "&a点击强制开局" : "&7当前状态不能强制开局";
+            inventory.setItem(i, item(Material.FILLED_MAP,
+                    "&e" + session.getConfig().getId(),
+                    "&7名称：&f" + session.getConfig().getName(),
+                    "&7状态：&f" + ArenaAdmin.stateName(state),
+                    "&7玩家：&f" + session.getPlayers().size() + " 人",
+                    hint));
+        }
+        if (sessions.isEmpty()) {
+            inventory.setItem(22, item(Material.PAPER, "&7没有配置任何竞技场"));
+        }
+        inventory.setItem(49, item(Material.ARROW, "&7返回"));
+    }
+
+    private void renderAdminPlayers(Inventory inventory) {
+        java.util.List<Player> players = adminPlayerList();
+        for (int i = 0; i < players.size() && i < 45; i++) {
+            Player target = players.get(i);
+            Stats data = stats.get(target.getUniqueId());
+            String career = data == null ? "&7（无生涯数据）"
+                    : "&7K/D：&f" + data.kills + "&7/&f" + data.deaths
+                    + "  &7场次：&f" + data.matches + "  &7胜场：&f" + data.wins;
+            inventory.setItem(i, item(Material.PLAYER_HEAD,
+                    "&e" + target.getName(), career,
+                    "&cShift + 左键 &7清除他的生涯数据"));
+        }
+        if (players.isEmpty()) {
+            inventory.setItem(22, item(Material.PAPER, "&7当前没有在线玩家"));
+        }
+        inventory.setItem(49, item(Material.ARROW, "&7返回"));
+    }
+
+    private void renderAdminMatches(Inventory inventory) {
+        for (int i = 0; i < history.size() && i < 45; i++) {
+            MatchRecord record = history.get(i);
+            inventory.setItem(i, item(Material.BOOK,
+                    "&e" + record.arenaId() + " &7| &f" + record.winner(),
+                    "&7比分：&cT " + record.tScore() + " &7: &9CT " + record.ctScore(),
+                    "&7时间：&f" + time(record.time()),
+                    "&cShift + 左键 &7删除这条记录"));
+        }
+        if (history.isEmpty()) {
+            inventory.setItem(22, item(Material.PAPER, "&7暂无比赛记录"));
+        }
+        inventory.setItem(49, item(Material.ARROW, "&7返回"));
+    }
+
+    private java.util.List<ArenaSession> arenaList() {
+        java.util.List<ArenaSession> list = new java.util.ArrayList<>();
+        if (plugin.getWbd() == null || plugin.getWbd().getArenaManager() == null) return list;
+        list.addAll(plugin.getWbd().getArenaManager().getSessions());
+        list.sort(java.util.Comparator.comparing(s -> s.getConfig().getId()));
+        return list;
+    }
+
+    private java.util.List<Player> adminPlayerList() {
+        java.util.List<Player> list = new java.util.ArrayList<>(Bukkit.getOnlinePlayers());
+        list.sort(java.util.Comparator.comparing(Player::getName));
+        return list;
+    }
+
+    private String teamLabel(Team team) {
+        if (team == Team.T) return "T 方";
+        if (team == Team.CT) return "CT 方";
+        return "观战";
     }
 
     private void renderMatch(Inventory inventory, MenuHolder holder) {
@@ -533,6 +788,14 @@ public class MenuModule implements AddonModule, Listener {
     private List<AddonMode> modes() {
         if (plugin.getApi() == null) return List.of();
         return plugin.getApi().getModes();
+    }
+
+    private ArenaSession sessionOf(Player player) {
+        if (player == null || plugin.getWbd() == null
+                || plugin.getWbd().getArenaManager() == null) {
+            return null;
+        }
+        return plugin.getWbd().getArenaManager().getSession(player);
     }
 
     private ArenaSession session(String arenaId) {
@@ -829,7 +1092,8 @@ public class MenuModule implements AddonModule, Listener {
     }
 
     public enum Screen {
-        MAIN, MODES, MODE, MATCHING, ROOMS, ACTIVE, TEAM, SUMMARY, MATCH, PROFILE
+        MAIN, MODES, MODE, MATCHING, ROOMS, ACTIVE, TEAM, SUMMARY, MATCH, PROFILE,
+        ADMIN, ADMIN_MAPS, ADMIN_DATA, ADMIN_PLAYERS, ADMIN_MATCHES
     }
 
     public static final class MenuHolder implements InventoryHolder {

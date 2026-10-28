@@ -25,7 +25,7 @@ WarZBombDefuse 的第三方附加组件合集 —— 击杀报告 / 单人伤害
 | 进场位置兜底 | `position-backup` | 记录进场前的位置，服务器重启/插件卸载时传回，重启后登录再补一次 |
 | 技术暂停 | `technical-pause` | `/wbdaddon pause` 管理员即时暂停、`/pause` 玩家每队限次（下一回合开始生效）；顶部 BossBar 倒计时，冻结回合与 C4 计时及玩家操作 |
 | 冻结倒计时音效 | `freeze-countdown` | 回合冻结最后 4 秒每秒一声轻「哒」，音调逐秒升高；冻结不足时只取放得下的最后几秒 |
-| 主菜单 | `menu` | `/wbda` 或 Shift+F 打开箱子菜单：模式选择（爆破/死斗）、匹配、当前比赛、比赛总结、个人资料；比赛历史与生涯数据落盘到 `data/stats.db`（SQLite，驱动缺失时回退 `data/stats.yml`） |
+| 主菜单 | `menu` | `/wbda` 或 Shift+F 打开箱子菜单；`/wbdaddon admin` 是管理员面板（强制开局 / 强制结算回合 / 清除玩家与比赛数据）：模式选择（爆破/死斗）、匹配、当前比赛、比赛总结、个人资料；比赛历史与生涯数据落盘到 `data/stats.db`（SQLite，驱动缺失时回退 `data/stats.yml`） |
 | 回合结算展示 | `round-summary` | 回合结束标题显示胜方 + MVP，副标题随机挑一条本场趣闻（全歼用时 / 首杀 / 命中率 / 爆头等） |
 | JourneyMap 桥接 | `journeymap-bridge` | 同步 WBD 队伍数据到原版 Team，配合 JourneyMap Teams 队友可见、敌军隐藏、观战消失 |
 | 断线重联 | `reconnect` | 比赛中有人掉线时替他守住下一回合（回合结算处暂停，等他回来）；每队每场 1 次；重连自动回原阵营并继承经济与战绩 |

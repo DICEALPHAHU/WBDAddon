@@ -5,6 +5,7 @@ import alphahu.wbdaddon.api.AddonMode;
 import alphahu.wbdaddon.module.AddonModule;
 import alphahu.wbdaddon.module.BombDefuseSoundModule;
 import alphahu.wbdaddon.module.LoadoutGuardModule;
+import alphahu.wbdaddon.module.MenuModule;
 import alphahu.wbdaddon.module.TechnicalPauseModule;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
@@ -43,7 +44,7 @@ public class WBDAddonCommand implements CommandExecutor, TabCompleter {
 
     private static final List<String> SUB_COMMANDS =
             Arrays.asList("help", "reload", "modules", "modes", "sound", "pause", "resume",
-                    "retag", "shopscan");
+                    "retag", "shopscan", "admin");
 
     public WBDAddonCommand(WBDAddon plugin) {
         this.plugin = plugin;
@@ -126,6 +127,8 @@ public class WBDAddonCommand implements CommandExecutor, TabCompleter {
 
             case "shopscan" -> scanShop(sender);
 
+            case "admin" -> openAdmin(sender);
+
             default -> sender.sendMessage(color("&c未知子命令。使用 /wbdaddon help 查看帮助。"));
         }
 
@@ -143,8 +146,27 @@ public class WBDAddonCommand implements CommandExecutor, TabCompleter {
         sender.sendMessage(color("&e/wbdaddon resume [竞技场] &7- 恢复比赛（管理员）"));
         sender.sendMessage(color("&e/wbdaddon retag [玩家] &7- 重打装备分类标签"));
         sender.sendMessage(color("&e/wbdaddon shopscan &7- 扫描商店商品并输出分类表片段"));
+        sender.sendMessage(color("&e/wbdaddon admin &7- 打开管理员面板"));
         sender.sendMessage(color("&e/pause &7- 玩家请求技术暂停（每队每场限次）"));
         sender.sendMessage(color("&6=========================="));
+    }
+
+    /** {@code /wbdaddon admin}：打开管理员面板。 */
+    private void openAdmin(CommandSender sender) {
+        if (!sender.hasPermission("wbdaddon.admin")) {
+            sender.sendMessage(color("&c你没有权限打开管理员面板。"));
+            return;
+        }
+        if (!(sender instanceof Player player)) {
+            sender.sendMessage(color("&c该命令只能由玩家执行。"));
+            return;
+        }
+        AddonModule module = plugin.getModuleManager().getModule("menu");
+        if (!(module instanceof MenuModule menu) || !plugin.getModuleManager().isEnabled(module)) {
+            sender.sendMessage(color("&c主菜单模块未启用。"));
+            return;
+        }
+        menu.openAdmin(player);
     }
 
     /**
