@@ -25,6 +25,7 @@ import alphahu.wbdaddon.module.RoundSummaryModule;
 import alphahu.wbdaddon.module.ShortHandedCompensationModule;
 import alphahu.wbdaddon.module.TeamArmorModule;
 import alphahu.wbdaddon.module.TechnicalPauseModule;
+import alphahu.wbdaddon.module.TeammateGlowModule;
 import alphahu.wbdaddon.module.VoteModule;
 import com.warz.bombdefuse.WarZBombDefusePlugin;
 import org.bukkit.Bukkit;
@@ -158,6 +159,14 @@ public final class WBDAddon extends JavaPlugin {
         moduleManager.register(new ReconnectModule(this));
         moduleManager.register(new ShortHandedCompensationModule(this));
         moduleManager.register(new JourneyMapModule(this));
+        // 队友轮廓发光依赖 ProtocolLib 的逐人发包能力，没装就不注册（直接 new 会触发类加载报错）
+        try {
+            if (Bukkit.getPluginManager().isPluginEnabled("ProtocolLib")) {
+                moduleManager.register(new TeammateGlowModule(this));
+            }
+        } catch (Throwable t) {
+            getLogger().warning("队友轮廓发光不可用：" + t);
+        }
 
         // 5. 启用所有模块
         moduleManager.enableAll();

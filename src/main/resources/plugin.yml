@@ -17,6 +17,7 @@ softdepend:
   - TacZSpigotBridge
   - PlaceholderAPI
   - JourneyMap
+  - ProtocolLib
 
 commands:
   wbdaddon:
