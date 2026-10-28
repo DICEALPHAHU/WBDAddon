@@ -11,6 +11,7 @@ import com.warz.bombdefuse.api.WbdPlayerJoinArenaEvent;
 import com.warz.bombdefuse.api.WbdRoundStartEvent;
 import com.warz.bombdefuse.arena.ArenaSession;
 import com.warz.bombdefuse.arena.PlayerRecord;
+import com.warz.bombdefuse.model.GameState;
 import com.warz.bombdefuse.model.Team;
 import com.warz.bombdefuse.shop.ShopItem;
 import com.warz.bombdefuse.shop.ShopManager;
@@ -141,6 +142,8 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
     private boolean refundOldWeapon = true;
     private boolean dropDuplicates = true;
     private boolean purchaseSafety = true;
+    private boolean protectOpenItem = true;
+    private OpenKey openKey = OpenKey.SWAP_HANDS;
     private boolean debug = false;
     private SameGunPolicy sameGunPolicy = SameGunPolicy.BLOCK;
     private long lockIntervalTicks = 10L;
@@ -290,6 +293,8 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
         this.refundOldWeapon = plugin.getConfig().getBoolean(base + "refund-old-weapon", true);
         this.dropDuplicates = plugin.getConfig().getBoolean(base + "drop-duplicates", true);
         this.purchaseSafety = plugin.getConfig().getBoolean(base + "purchase-safety", true);
+        this.protectOpenItem = plugin.getConfig().getBoolean(base + "protect-open-item", true);
+        this.openKey = OpenKey.parse(plugin.getConfig().getString(base + "open-key", "swap-hands"));
         this.debug = plugin.getConfig().getBoolean(base + "debug", false);
         this.lockIntervalTicks = Math.max(1L,
                 plugin.getConfig().getLong(base + "lock-interval-ticks", 10L));
@@ -656,6 +661,7 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
         normalizeCategory(player, inventory, Category.SECONDARY, secondarySlot);
         normalizeCategory(player, inventory, Category.MELEE, meleeSlot);
         normalizeThrowables(player, inventory);
+        ensureOpenItem(player);
     }
 
     private void normalizeCategory(Player player, PlayerInventory inventory,
@@ -1448,16 +1454,112 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
     @EventHandler(priority = EventPriority.MONITOR)
     public void onDrop(PlayerDropItemEvent event) {
         Player player = event.getPlayer();
+        if (protectOpenItem && isOpenItem(event.getItemDrop().getItemStack())) {
+            event.setCancelled(true);
+            msg(player, "open-item-locked", Map.of());
+            return;
+        }
         if (!isManaged(player)) return;
         // 丢弃后下一 tick 再归位；购买判定本身只看背包现状，不依赖缓存
         scheduleNormalize(player);
     }
 
-    @EventHandler(priority = EventPriority.MONITOR)
+    @EventHandler(priority = EventPriority.LOW, ignoreCancelled = true)
     public void onSwapHands(PlayerSwapHandItemsEvent event) {
-        if (isManaged(event.getPlayer())) {
-            scheduleNormalize(event.getPlayer());
+        Player player = event.getPlayer();
+
+        // 绿宝石换到副手 = 把它藏起来，直接拦
+        if (protectOpenItem
+                && (isOpenItem(event.getMainHandItem()) || isOpenItem(event.getOffHandItem()))) {
+            event.setCancelled(true);
+            return;
         }
+
+        // F 键（交换副手）当商店快捷键用：服务端能识别的“按键”只有这一颗
+        if (openKey == OpenKey.SWAP_HANDS && openShopByKey(player)) {
+            event.setCancelled(true);
+            return;
+        }
+
+        if (isManaged(player)) {
+            scheduleNormalize(player);
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // 商店开物品
+    // ------------------------------------------------------------------
+
+    /** 是不是 WBD 的商店开物品（绿宝石）。 */
+    private boolean isOpenItem(ItemStack stack) {
+        if (stack == null || stack.getType().isAir()) return false;
+        WarZBombDefusePlugin wbd = plugin.getWbd();
+        return wbd != null && ItemUtil.hasMarker(stack, wbd, "shop_open");
+    }
+
+    /**
+     * 用按键打开商店。
+     *
+     * <p>只对「正在比赛、还活着、处于冻结或进行中」的玩家生效，
+     * 免得在大厅或观战按 F 也弹一个商店出来。
+     */
+    private boolean openShopByKey(Player player) {
+        if (!active) return false;
+        if (player.getOpenInventory().getType() != org.bukkit.event.inventory.InventoryType.CRAFTING) {
+            return false;
+        }
+        ArenaSession session = session(player);
+        if (session == null) return false;
+        PlayerRecord record = session.getRecord(player);
+        if (record == null || !record.isAlive()) return false;
+        GameState state = session.getState();
+        if (state != GameState.FREEZE && state != GameState.LIVE) return false;
+        ShopManager shop = shopManager();
+        if (shop == null) return false;
+        try {
+            shop.open(player, session);
+            return true;
+        } catch (Throwable t) {
+            if (debug) {
+                plugin.getLogger().warning("[loadout] 按键开商店失败：" + t);
+            }
+            return false;
+        }
+    }
+
+    /**
+     * 保证绿宝石一直待在固定格子里。
+     *
+     * <p>被拖走、被购买顶掉、被别的插件清掉，都会在下一秒补回来；
+     * 优先把背包里现有的那颗挪回原位，实在没有才新建一颗，避免复制。
+     */
+    private void ensureOpenItem(Player player) {
+        if (!protectOpenItem) return;
+        ShopManager shop = shopManager();
+        if (shop == null) return;
+        int slot = shop.getOpenItemSlot();
+        PlayerInventory inventory = player.getInventory();
+        if (slot < 0 || slot >= inventory.getSize()) return;
+
+        ArenaSession session = session(player);
+        if (session == null) return;
+        PlayerRecord record = session.getRecord(player);
+        if (record == null || !record.isAlive()) return;
+        GameState state = session.getState();
+        if (state != GameState.FREEZE && state != GameState.LIVE) return;
+
+        if (isOpenItem(inventory.getItem(slot))) return;
+
+        for (int i = 0; i < inventory.getSize(); i++) {
+            if (i == slot) continue;
+            ItemStack stack = inventory.getItem(i);
+            if (isOpenItem(stack)) {
+                moveItem(player, stack, i, slot);
+                return;
+            }
+        }
+        inventory.setItem(slot, shop.createOpenItem());
+        sync(player);
     }
 
     @EventHandler
@@ -1562,6 +1664,20 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
     }
 
     private record PurchaseItems(SlotItem oldItem, SlotItem newItem) {
+    }
+
+    /** 打开商店的按键。服务端只能感知「交换副手」，所以选项就这两个有意义。 */
+    private enum OpenKey {
+        SWAP_HANDS,
+        OFF;
+
+        static OpenKey parse(String raw) {
+            if (raw == null) return SWAP_HANDS;
+            return switch (raw.trim().toLowerCase(Locale.ROOT)) {
+                case "off", "none", "disabled", "false" -> OFF;
+                default -> SWAP_HANDS;
+            };
+        }
     }
 
     private enum SameGunPolicy {
