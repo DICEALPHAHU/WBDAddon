@@ -378,6 +378,19 @@ public class MenuModule implements AddonModule, Listener {
             admin.sendMessage(color("&c该竞技场里一个人都没有，先让人进去。"));
             return;
         }
+
+        // 两边都得有人：只要有一边是 0 人，回合一开始就会被判负
+        // （T 全灭 / CT 全灭的判定），白送一个胜场，所以直接拦住
+        int tCount = teamCount(session, Team.T);
+        int ctCount = teamCount(session, Team.CT);
+        if (tCount == 0 || ctCount == 0) {
+            admin.sendMessage(color("&c开局取消：T / CT 有一边没人（&fT " + tCount
+                    + " &7/ &fCT " + ctCount + "&c），开打会立刻判这一边输。"));
+            admin.sendMessage(color("&7先让两边都有人：&f/wbd join "
+                    + session.getConfig().getId() + " t&7 或 &fct&7，或让玩家自己选阵营。"));
+            return;
+        }
+
         // 倒计时压到 1 秒，跳过大厅等待
         if (ArenaAdmin.forceStart(session, 20, plugin.getLogger())) {
             admin.closeInventory();
@@ -386,6 +399,14 @@ public class MenuModule implements AddonModule, Listener {
         } else {
             admin.sendMessage(color("&c强制开局失败（可能是 WBD 版本差异）。"));
         }
+    }
+
+    private int teamCount(ArenaSession session, Team team) {
+        int count = 0;
+        for (PlayerRecord record : session.getPlayers()) {
+            if (record.getTeam() == team) count++;
+        }
+        return count;
     }
 
     private void forceRound(Player admin, boolean win) {
@@ -599,13 +620,23 @@ public class MenuModule implements AddonModule, Listener {
         for (int i = 0; i < sessions.size() && i < 45; i++) {
             ArenaSession session = sessions.get(i);
             GameState state = session.getState();
-            String hint = state == GameState.WAITING || state == GameState.COUNTDOWN
-                    ? "&a点击强制开局" : "&7当前状态不能强制开局";
+            int tCount = teamCount(session, Team.T);
+            int ctCount = teamCount(session, Team.CT);
+            boolean ready = (state == GameState.WAITING || state == GameState.COUNTDOWN)
+                    && tCount > 0 && ctCount > 0;
+            String hint;
+            if (state != GameState.WAITING && state != GameState.COUNTDOWN) {
+                hint = "&7当前状态不能强制开局";
+            } else if (tCount == 0 || ctCount == 0) {
+                hint = "&c有一边没人，开了会直接判负";
+            } else {
+                hint = "&a点击强制开局";
+            }
             inventory.setItem(i, item(Material.FILLED_MAP,
                     "&e" + session.getConfig().getId(),
                     "&7名称：&f" + session.getConfig().getName(),
                     "&7状态：&f" + ArenaAdmin.stateName(state),
-                    "&7玩家：&f" + session.getPlayers().size() + " 人",
+                    "&7人数：&cT " + tCount + " &7/ &9CT " + ctCount,
                     hint));
         }
         if (sessions.isEmpty()) {
