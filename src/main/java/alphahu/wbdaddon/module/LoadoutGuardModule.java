@@ -51,6 +51,7 @@ import java.util.Comparator;
 import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -1190,6 +1191,8 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
             return;
         }
         PlayerInventory inventory = player.getInventory();
+        // 先清掉占着预留格子、又不属于那里的东西，再让各分类归位
+        enforceReservedSlots(player, inventory);
         if (enabled(Category.PRIMARY)) {
             normalizeCategory(player, inventory, Category.PRIMARY, primarySlot);
         }
@@ -2172,6 +2175,8 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
         boolean moved = false;
         for (SlotItem item : items) {
             if (allowed.contains(item.slot())) continue;
+            // C4 的槽位归 WBD 管（c4-slot），别去动它
+            if (isC4(item.item())) continue;
 
             Integer target = null;
             for (int slot : utilitySlots) {
@@ -2199,6 +2204,126 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
         }
         if (moved) {
             sync(player);
+        }
+    }
+
+    /**
+     * 预留槽位不许被「没管理的物品」占用。
+     *
+     * <p>快捷栏位置是分好的：1-4 武器/投掷物、5 C4、6-7 功能道具、9 商店绿宝石。
+     * 只要有别的东西（泥土、面包、别人掉的枪）占着这些格子，就把它挪到
+     * 「没被预留」的格子里；没有空位再退到背包 9-35；实在没地方就原地不动。
+     *
+     * <p>顺序很重要：先清场，再让 {@code normalizeCategory} 把各自的物品摆回槽位。
+     */
+    private void enforceReservedSlots(Player player, PlayerInventory inventory) {
+        Set<Integer> reserved = reservedSlots();
+        if (reserved.isEmpty()) return;
+        int openSlot = openItemSlot();
+
+        boolean moved = false;
+        for (int slot : reserved) {
+            if (slot < 0 || slot > 8) continue;
+            ItemStack stack = itemAt(inventory, slot);
+            if (stack == null || stack.getType().isAir()) continue;
+            if (slotAccepts(slot, stack)) continue;
+
+            int target = -1;
+            for (int candidate = 0; candidate < 9; candidate++) {
+                if (reserved.contains(candidate) || candidate == openSlot) continue;
+                ItemStack occupant = itemAt(inventory, candidate);
+                if (occupant == null || occupant.getType().isAir()) {
+                    target = candidate;
+                    break;
+                }
+            }
+            if (target < 0) {
+                for (int candidate = 9; candidate < STORAGE_SIZE; candidate++) {
+                    ItemStack occupant = itemAt(inventory, candidate);
+                    if (occupant == null || occupant.getType().isAir()) {
+                        target = candidate;
+                        break;
+                    }
+                }
+            }
+            if (target < 0) {
+                if (debug) {
+                    plugin.getLogger().info("[loadout] " + player.getName()
+                            + " 的第 " + (slot + 1) + " 格被 " + itemName(stack)
+                            + " 占用，但找不到空位可挪");
+                }
+                continue;
+            }
+            setItemAt(inventory, target, stack);
+            setItemAt(inventory, slot, null);
+            moved = true;
+            if (debug) {
+                plugin.getLogger().info("[loadout] " + player.getName() + " 的 "
+                        + itemName(stack) + " 从预留格 " + (slot + 1)
+                        + " 挪到第 " + (target + 1) + " 格");
+            }
+        }
+        if (moved) {
+            sync(player);
+        }
+    }
+
+    /** 当前被判为「预留」的快捷栏格子。 */
+    private Set<Integer> reservedSlots() {
+        Set<Integer> slots = new LinkedHashSet<>();
+        if (enabled(Category.PRIMARY)) slots.add(primarySlot);
+        if (enabled(Category.SECONDARY)) slots.add(secondarySlot);
+        if (enabled(Category.MELEE)) slots.add(meleeSlot);
+        if (enabled(Category.THROWABLE)) slots.add(throwableSlot);
+        if (enabled(Category.UTILITY)) {
+            slots.addAll(utilitySlots);
+            int c4 = c4Slot();
+            if (c4 >= 0) slots.add(c4);
+        }
+        slots.removeIf(slot -> slot < 0 || slot > 8);
+        return slots;
+    }
+
+    /** 这个格子能不能放这件东西。 */
+    private boolean slotAccepts(int slot, ItemStack stack) {
+        Category actual = classify(stack);
+        if (actual == Category.NONE || actual == Category.ATTACHMENT) {
+            return false;
+        }
+        if (slot == primarySlot) return actual == Category.PRIMARY;
+        if (slot == secondarySlot) return actual == Category.SECONDARY;
+        if (slot == meleeSlot) return actual == Category.MELEE;
+        if (slot == throwableSlot) return actual == Category.THROWABLE;
+        if (utilitySlots.contains(slot)) {
+            return actual == Category.UTILITY && !isC4(stack);
+        }
+        if (slot == c4Slot()) return isC4(stack);
+        return false;
+    }
+
+    private int c4Slot() {
+        try {
+            var settings = plugin.getWbd().getConfigManager().getSettings();
+            return settings == null ? -1 : settings.c4Slot;
+        } catch (Throwable t) {
+            return -1;
+        }
+    }
+
+    private int openItemSlot() {
+        try {
+            return plugin.getWbd().getShopManager().getOpenItemSlot();
+        } catch (Throwable t) {
+            return -1;
+        }
+    }
+
+    private boolean isC4(ItemStack item) {
+        try {
+            WarZBombDefusePlugin wbd = plugin.getWbd();
+            return wbd != null && "c4".equals(ItemUtil.getMarker(item, wbd));
+        } catch (Throwable t) {
+            return false;
         }
     }
 
