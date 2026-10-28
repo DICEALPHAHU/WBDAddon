@@ -195,6 +195,9 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
     private final Set<Material> throwableMaterials = new HashSet<>();
     private final Set<Material> meleeMaterials = new HashSet<>();
     private final Set<Material> utilityMaterials = new HashSet<>();
+
+    /** 这些材质买到/捡到后直接进背包（9-35），不占快捷栏。 */
+    private final Set<Material> backpackMaterials = new HashSet<>();
     private String taczGunMaterialName = "TACZ_MODERN_KINETIC_GUN";
 
     public LoadoutGuardModule(WBDAddon plugin) {
@@ -701,6 +704,10 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
         readMaterials(base + "utility-materials",
                 List.of("LRTACTICAL_CONSUMABLE", "TACZ_ATTACHMENT", "TACZ_AMMO",
                         "SHEARS", "POTION"), utilityMaterials);
+
+        backpackMaterials.clear();
+        readMaterials(base + "backpack-materials",
+                List.of("TACZ_ATTACHMENT"), backpackMaterials);
     }
 
     private void readMaterials(String path, List<String> defaults, Set<Material> target) {
@@ -1122,6 +1129,7 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
         if (enabled(Category.THROWABLE)) {
             normalizeThrowables(player, inventory);
         }
+        moveToBackpack(player, inventory);
         ensureOpenItem(player);
     }
 
@@ -2071,6 +2079,45 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
      * <p>被拖走、被购买顶掉、被别的插件清掉，都会在下一秒补回来；
      * 优先把背包里现有的那颗挪回原位，实在没有才新建一颗，避免复制。
      */
+    /**
+     * 把「不该占快捷栏」的东西挪到背包（9-35）。
+     *
+     * <p>WBD 发商品走的是 {@code addItem}，而 {@code addItem} 会<b>先填快捷栏</b>——
+     * 买个配件结果占掉 1-9 格，手里正用的枪、投掷物就被挤走了。
+     * 所以买完/捡到后统一把这类物品塞回背包。
+     *
+     * <p>背包满了就不动它（总比把东西弄丢强）。
+     */
+    private void moveToBackpack(Player player, PlayerInventory inventory) {
+        if (backpackMaterials.isEmpty()) return;
+        boolean moved = false;
+        for (int slot = 0; slot < 9; slot++) {
+            ItemStack stack = inventory.getItem(slot);
+            if (stack == null || stack.getType().isAir()) continue;
+            if (!backpackMaterials.contains(stack.getType())) continue;
+
+            int empty = -1;
+            for (int candidate = 9; candidate < STORAGE_SIZE; candidate++) {
+                ItemStack occupied = inventory.getItem(candidate);
+                if (occupied == null || occupied.getType().isAir()) {
+                    empty = candidate;
+                    break;
+                }
+            }
+            if (empty < 0) continue;
+            setItemAt(inventory, empty, stack);
+            setItemAt(inventory, slot, null);
+            moved = true;
+            if (debug) {
+                plugin.getLogger().info("[loadout] " + player.getName() + " 的 "
+                        + itemName(stack) + " 已从快捷栏 " + slot + " 挪到背包 " + empty);
+            }
+        }
+        if (moved) {
+            sync(player);
+        }
+    }
+
     private void ensureOpenItem(Player player) {
         if (!protectOpenItem) return;
         ShopManager shop = shopManager();
