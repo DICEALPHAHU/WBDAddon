@@ -51,6 +51,18 @@ import java.util.concurrent.ConcurrentHashMap;
  * 经济、击杀、死亡、下包、拆包数据原样写回新的 {@code PlayerRecord}
  * （WBD 掉线时会直接删记录，不写回就相当于全部清零）。
  *
+ * <h2>两个时间窗</h2>
+ *
+ * <p>「等」和「算不算重连」是两件事：
+ *
+ * <ul>
+ *   <li>{@code hold-max-seconds}（默认 60 秒）：比赛最多为他停多久。到点就继续，
+ *       不能让九个人陪一个人干等。</li>
+ *   <li>{@code pending-max-seconds}（默认 300 秒）：掉线后多久之内回来还算「重连」。
+ *       这段时间里回来，哪怕比赛早就继续了，也会自动放回原阵营并写回数据；
+ *       超过就按弃赛处理，记录清空，他想打只能自己重新 join。</li>
+ * </ul>
+ *
  * @author AlphaHu
  */
 public class ReconnectModule implements AddonModule, Listener {
@@ -72,6 +84,7 @@ public class ReconnectModule implements AddonModule, Listener {
     private BukkitTask ticker;
 
     private int holdMaxSeconds;
+    private int pendingMaxSeconds;
     private boolean autoRejoin;
     private boolean debug;
 
@@ -98,17 +111,20 @@ public class ReconnectModule implements AddonModule, Listener {
     public void onEnable() {
         this.holdMaxSeconds = plugin.getConfig()
                 .getInt("modules.reconnect.hold-max-seconds", 60);
+        this.pendingMaxSeconds = plugin.getConfig()
+                .getInt("modules.reconnect.pending-max-seconds", 300);
         this.autoRejoin = plugin.getConfig()
                 .getBoolean("modules.reconnect.auto-rejoin", true);
         this.debug = plugin.getConfig().getBoolean("modules.reconnect.debug", false);
 
         Bukkit.getPluginManager().registerEvents(this, plugin);
-        // 只用来发现「等待被超时 / 管理员 / 投票提前结束」，一秒一次足够
+        // 一秒一次：发现「等待被超时 / 管理员 / 投票提前结束」，顺便清理过期的重联记录
         this.ticker = Bukkit.getScheduler().runTaskTimer(plugin, this::tick, 20L, 20L);
 
-        plugin.getLogger().info("断线重联已启动：每队每场 1 次等待，最长 "
+        plugin.getLogger().info("断线重联已启动：每队每场 1 次等待，最多等 "
                 + (holdMaxSeconds <= 0 ? "不限时" : holdMaxSeconds + " 秒")
-                + "，重连后自动回到原阵营并继承经济与战绩。");
+                + "；" + (pendingMaxSeconds <= 0 ? "不限时" : pendingMaxSeconds + " 秒")
+                + "内回来仍算重连并继承经济与战绩。");
     }
 
     @Override
@@ -180,7 +196,10 @@ public class ReconnectModule implements AddonModule, Listener {
         }
 
         broadcast(r.arenaId, "&e[断线重联] " + r.name + " 掉线了，"
-                + "下一回合会暂停等待他回来&7（本队本场第 1 次）。");
+                + "下一回合暂停等待他回来&7（本队本场第 1 次，"
+                + (holdMaxSeconds <= 0 ? "不限时" : "最多等 " + holdMaxSeconds + " 秒")
+                + (pendingMaxSeconds <= 0 ? "" : "；" + (pendingMaxSeconds / 60) + " 分钟内回来都算重连")
+                + "）。");
         waiting.put(r.arenaId, r);
         if (state == GameState.ROUND_END) {
             startHold(r);
@@ -240,6 +259,15 @@ public class ReconnectModule implements AddonModule, Listener {
     private void tryRejoin(Player player) {
         Reconnect r = pending.get(player.getUniqueId());
         if (r == null || !player.isOnline()) {
+            return;
+        }
+        if (expired(r)) {
+            // 超过重联窗口：按弃赛处理，记录一删，回来就是个普通玩家
+            pending.remove(r.uuid, r);
+            clearWait(r);
+            player.sendMessage(color("&7你断线超过 " + (pendingMaxSeconds / 60)
+                    + " 分钟，本场已按弃赛处理。"));
+            debug("超过重联窗口，放弃 " + r.name);
             return;
         }
         if (!autoRejoin) {
@@ -335,8 +363,16 @@ public class ReconnectModule implements AddonModule, Listener {
         }
     }
 
-    /** 每秒核对一次：等待被超时 / 管理员 / 投票结束了就把状态收干净。 */
+    /**
+     * 每秒核对一次。
+     *
+     * <p>两件事：等待被超时 / 管理员 / 投票结束了就把状态收干净；
+     * 以及把超过重联窗口还没回来的记录清掉——过了这个点他就不算「掉线待归」，
+     * 回来也当普通玩家处理。
+     */
     private void tick() {
+        expirePending();
+
         if (holding.isEmpty()) {
             return;
         }
@@ -353,6 +389,26 @@ public class ReconnectModule implements AddonModule, Listener {
                 debug("等待结束 " + r.name + " @ " + arenaId);
             }
         }
+    }
+
+    /** 清理超过 {@code pending-max-seconds} 还没回来的记录。 */
+    private void expirePending() {
+        if (pending.isEmpty()) {
+            return;
+        }
+        for (Reconnect r : new ArrayList<>(pending.values())) {
+            if (!expired(r) || !pending.remove(r.uuid, r)) {
+                continue;
+            }
+            clearWait(r);
+            debug("超过重联窗口，放弃等待 " + r.name + " @ " + r.arenaId);
+        }
+    }
+
+    /** 掉线后是否已经超过重联窗口（0 表示不限）。 */
+    private boolean expired(Reconnect r) {
+        return pendingMaxSeconds > 0
+                && System.currentTimeMillis() - r.createdAt > pendingMaxSeconds * 1000L;
     }
 
     // ------------------------------------------------------------------
@@ -451,6 +507,8 @@ public class ReconnectModule implements AddonModule, Listener {
         final int deaths;
         final int plants;
         final int defuses;
+        /** 掉线时刻：重联窗口从这里开始算。 */
+        final long createdAt = System.currentTimeMillis();
 
         Reconnect(UUID uuid, String name, String arenaId, Team team, int money,
                   int kills, int deaths, int plants, int defuses) {
