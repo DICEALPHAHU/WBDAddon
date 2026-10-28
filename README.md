@@ -28,6 +28,7 @@ WarZBombDefuse 的第三方附加组件合集 —— 击杀报告 / 单人伤害
 | 主菜单 | `menu` | `/wbda` 或 Shift+F 打开箱子菜单；`/wbdaddon admin` 是管理员面板（强制开局 / 强制结算回合 / 清除玩家与比赛数据）：模式选择（爆破/死斗）、匹配、当前比赛、比赛总结、个人资料；比赛历史与生涯数据落盘到 `data/stats.db`（SQLite，驱动缺失时回退 `data/stats.yml`） |
 | 回合结算展示 | `round-summary` | 回合结束标题显示胜方 + MVP，副标题随机挑一条本场趣闻（全歼用时 / 首杀 / 命中率 / 爆头等） |
 | JourneyMap 桥接 | `journeymap-bridge` | 同步 WBD 队伍数据到原版 Team，配合 JourneyMap Teams 队友可见、敌军隐藏、观战消失 |
+| 昵称标签 | `name-tag` | 队友看得见名牌、敌人看不见：按观察者自己的计分板逐人控制，不泄露位置 |
 | 队友轮廓发光 | `teammate-glow` | 只对同阵营显示队友的发光轮廓（隔墙可见），敌人看不到；靠 ProtocolLib 逐人发包实现 |
 | 少人经济补偿 | `short-handed-compensation` | 从指定回合起，每回合按开局人数差给少人方每人一笔补偿 |
 | 断线重联 | `reconnect` | 比赛中有人掉线时替他守住下一回合（回合结算处暂停，等他回来）；每队每场 1 次；重连自动回原阵营并继承经济与战绩 |

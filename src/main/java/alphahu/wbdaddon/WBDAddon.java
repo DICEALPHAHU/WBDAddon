@@ -18,6 +18,7 @@ import alphahu.wbdaddon.module.LoadoutGuardModule;
 import alphahu.wbdaddon.module.MatchStatusModule;
 import alphahu.wbdaddon.module.MenuModule;
 import alphahu.wbdaddon.module.ModuleManager;
+import alphahu.wbdaddon.module.NameTagModule;
 import alphahu.wbdaddon.module.PositionBackupModule;
 import alphahu.wbdaddon.module.ReconnectModule;
 import alphahu.wbdaddon.module.RoundEventsModule;
@@ -158,6 +159,7 @@ public final class WBDAddon extends JavaPlugin {
         moduleManager.register(new VoteModule(this));
         moduleManager.register(new ReconnectModule(this));
         moduleManager.register(new ShortHandedCompensationModule(this));
+        moduleManager.register(new NameTagModule(this));
         moduleManager.register(new JourneyMapModule(this));
         // 队友轮廓发光依赖 ProtocolLib 的逐人发包能力，没装就不注册（直接 new 会触发类加载报错）
         try {
