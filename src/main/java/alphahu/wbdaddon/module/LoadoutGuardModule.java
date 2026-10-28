@@ -201,6 +201,9 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
 
     /** 配件材质：单独一个类别，只做「进背包」，不占快捷栏也不限购。 */
     private final Set<Material> attachmentMaterials = new HashSet<>();
+
+    /** 功能道具该待的格子（默认第 6、7 格，0 基是 5、6）。 */
+    private final List<Integer> utilitySlots = new ArrayList<>();
     private String taczGunMaterialName = "TACZ_MODERN_KINETIC_GUN";
 
     public LoadoutGuardModule(WBDAddon plugin) {
@@ -279,7 +282,7 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
         }
         plugin.getLogger().info("装备槽守卫已启动：" + slotSummary()
                 + "（投掷物上限 " + (throwableLimit <= 0 ? "不限" : throwableLimit + " 颗）")
-                + "；配件进背包。");
+                + "；配件进背包；功能道具→" + utilitySlotSummary() + "。");
         if (!enabledCategories.isEmpty()) {
             StringBuilder off = new StringBuilder();
             for (Map.Entry<Category, Boolean> entry : enabledCategories.entrySet()) {
@@ -447,7 +450,7 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
         sameGunModes.clear();
         refundOldFlags.clear();
         for (Category category : new Category[]{Category.PRIMARY, Category.SECONDARY,
-                Category.MELEE, Category.THROWABLE, Category.ATTACHMENT}) {
+                Category.MELEE, Category.THROWABLE, Category.ATTACHMENT, Category.UTILITY}) {
             enabledCategories.put(category, true);
             replaceOnBuy.put(category, true);
             sameGunModes.put(category, SameGunMode.INHERIT);
@@ -467,6 +470,9 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
         applyCategoryRule(root, "melee", Category.MELEE);
         applyCategoryRule(root, "throwable", Category.THROWABLE);
         applyCategoryRule(root, "attachment", Category.ATTACHMENT);
+        applyCategoryRule(root, "utility", Category.UTILITY);
+
+        parseUtilitySlots(root);
 
         if (!validSlots()) {
             plugin.getLogger().warning("item-categories.yml 的 categories.*.slot 有重复或越界，"
@@ -476,6 +482,47 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
             this.secondarySlot = plugin.getConfig().getInt(base + "slots.secondary", 1);
             this.meleeSlot = plugin.getConfig().getInt(base + "slots.melee", 2);
             this.throwableSlot = plugin.getConfig().getInt(base + "slots.throwable", 3);
+        }
+    }
+
+    /**
+     * 功能道具的落点。支持两种写法：
+     * <pre>
+     *   utility:
+     *     slots: [5, 6]     # 0 基，5/6 = 第 6、7 格
+     *     slot: 5           # 或者只写一个
+     * </pre>
+     * 不写就默认第 6、7 格，至少不会去抢前四格（武器和投掷物的位置）。
+     */
+    private String utilitySlotSummary() {
+        StringBuilder sb = new StringBuilder();
+        for (int slot : utilitySlots) {
+            if (sb.length() > 0) sb.append(" / ");
+            sb.append("第 ").append(slot + 1).append(" 格");
+        }
+        return sb.length() == 0 ? "未设置" : sb.toString();
+    }
+
+    private void parseUtilitySlots(ConfigurationSection root) {
+        utilitySlots.clear();
+        ConfigurationSection section = root.getConfigurationSection("utility");
+        if (section != null) {
+            if (section.isList("slots")) {
+                for (int slot : section.getIntegerList("slots")) {
+                    if (slot >= 0 && slot <= 8 && !utilitySlots.contains(slot)) {
+                        utilitySlots.add(slot);
+                    }
+                }
+            } else if (section.isSet("slot")) {
+                int slot = section.getInt("slot", -1);
+                if (slot >= 0 && slot <= 8) {
+                    utilitySlots.add(slot);
+                }
+            }
+        }
+        if (utilitySlots.isEmpty()) {
+            utilitySlots.add(5);
+            utilitySlots.add(6);
         }
     }
 
@@ -553,6 +600,13 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
         sb.append("  throwable:\n    enabled: true\n    slot: ").append(throwableSlot)
                 .append("\n    limit: ").append(Math.max(0, throwableLimit)).append("\n");
         sb.append("  attachment:\n    enabled: true\n    # 配件不进快捷栏，统一放背包 9-35 格\n");
+        sb.append("  utility:\n    enabled: true\n")
+                .append("    # 功能道具（拆弹器、医疗包…）只准待这几格，0 基：5/6 = 第 6、7 格\n")
+                .append("    slots: [").append(utilitySlots.get(0));
+        for (int i = 1; i < utilitySlots.size(); i++) {
+            sb.append(", ").append(utilitySlots.get(i));
+        }
+        sb.append("]\n");
 
         try {
             java.nio.file.Files.writeString(file.toPath(), sb.toString(),
@@ -615,6 +669,13 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
         sb.append("  throwable:\n    enabled: true\n    slot: ").append(throwableSlot)
                 .append("\n    limit: ").append(Math.max(0, throwableLimit)).append("\n");
         sb.append("  attachment:\n    enabled: true\n    # 配件不进快捷栏，统一放背包 9-35 格\n");
+        sb.append("  utility:\n    enabled: true\n")
+                .append("    # 功能道具（拆弹器、医疗包…）只准待这几格，0 基：5/6 = 第 6、7 格\n")
+                .append("    slots: [").append(utilitySlots.get(0));
+        for (int i = 1; i < utilitySlots.size(); i++) {
+            sb.append(", ").append(utilitySlots.get(i));
+        }
+        sb.append("]\n");
         sb.append("\n");
         sb.append("# 按 TacZ GunId 指定（大小写不敏感，可省略命名空间 tacz:）\n");
         sb.append("guns:\n");
@@ -1140,6 +1201,9 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
         }
         if (enabled(Category.THROWABLE)) {
             normalizeThrowables(player, inventory);
+        }
+        if (enabled(Category.UTILITY)) {
+            normalizeUtility(player, inventory);
         }
         moveToBackpack(player, inventory);
         ensureOpenItem(player);
@@ -2091,6 +2155,53 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
      * <p>被拖走、被购买顶掉、被别的插件清掉，都会在下一秒补回来；
      * 优先把背包里现有的那颗挪回原位，实在没有才新建一颗，避免复制。
      */
+    /**
+     * 功能道具归位：只准待在 utilitySlots（默认第 6、7 格）。
+     *
+     * <p>买拆弹器/医疗包时 WBD 只保证「塞进背包」，实际会落在第一个空格，
+     * 经常是第 1 格，把主武器挤走。这里把落在别处（尤其前四格）的功能道具
+     * 挪到 6/7；6/7 都被占了就退回背包，实在没地方就留在原地——
+     * 优先级：别丢东西 &gt; 别抢前四格。
+     */
+    private void normalizeUtility(Player player, PlayerInventory inventory) {
+        if (utilitySlots.isEmpty()) return;
+        List<SlotItem> items = find(player, Category.UTILITY);
+        if (items.isEmpty()) return;
+
+        Set<Integer> allowed = new HashSet<>(utilitySlots);
+        boolean moved = false;
+        for (SlotItem item : items) {
+            if (allowed.contains(item.slot())) continue;
+
+            Integer target = null;
+            for (int slot : utilitySlots) {
+                ItemStack occupant = itemAt(inventory, slot);
+                if (occupant == null || occupant.getType().isAir()) {
+                    target = slot;
+                    break;
+                }
+            }
+            if (target == null) {
+                // 6/7 都占了：退到背包，别占着前四格
+                for (int slot = 9; slot < STORAGE_SIZE; slot++) {
+                    ItemStack occupant = itemAt(inventory, slot);
+                    if (occupant == null || occupant.getType().isAir()) {
+                        target = slot;
+                        break;
+                    }
+                }
+            }
+            if (target == null) continue;
+
+            setItemAt(inventory, target, item.item());
+            setItemAt(inventory, item.slot(), null);
+            moved = true;
+        }
+        if (moved) {
+            sync(player);
+        }
+    }
+
     /**
      * 把「不该占快捷栏」的东西挪到背包（9-35）。
      *
