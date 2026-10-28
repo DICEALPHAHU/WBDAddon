@@ -5,7 +5,7 @@ version: ${project.version}
 main: alphahu.wbdaddon.WBDAddon
 api-version: '1.20'
 authors: [AlphaHu]
-description: WarZBombDefuse 的第三方附加组件合集：击杀报告、回合伤害统计、比赛状态显示、竞技场饥饿锁定、JourneyMap 桥接、装备槽守卫、比赛投票。
+description: WarZBombDefuse 的第三方附加组件合集：击杀报告、回合伤害统计、比赛状态显示、竞技场饥饿锁定、JourneyMap 桥接、装备槽守卫、比赛投票、断线重联。
 website: https://github.com/DICEALPHAHU/WBDAddon
 
 # 硬依赖：没有 WarZBombDefuse 就不加载

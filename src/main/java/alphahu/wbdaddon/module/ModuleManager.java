@@ -54,8 +54,11 @@ public class ModuleManager {
                     }
                     enabledModules.add(module);
                     plugin.getLogger().info("已启用模块：" + module.getDisplayName());
-                } catch (Exception e) {
-                    plugin.getLogger().severe("模块 " + module.getDisplayName() + " 启用失败：" + e.getMessage());
+                } catch (Throwable e) {
+                    // 用 Throwable 而不是 Exception：模块里引用了服务端没有的 API 时
+                    // 抛的是 NoSuchMethodError / NoClassDefFoundError，属于 Error，
+                    // 漏掉它会让一次 /wbdaddon reload 直接崩在半路。
+                    plugin.getLogger().severe("模块 " + module.getDisplayName() + " 启用失败：" + e);
                     e.printStackTrace();
                 }
             } else {
@@ -73,8 +76,9 @@ public class ModuleManager {
             AddonModule module = enabledModules.get(i);
             try {
                 module.onDisable();
-            } catch (Exception e) {
-                plugin.getLogger().severe("模块 " + module.getDisplayName() + " 卸载失败：" + e.getMessage());
+            } catch (Throwable e) {
+                // 同上：一个模块挂掉不能把整轮卸载（以及接下来的重新启用）带走
+                plugin.getLogger().severe("模块 " + module.getDisplayName() + " 卸载失败：" + e);
                 e.printStackTrace();
             }
         }

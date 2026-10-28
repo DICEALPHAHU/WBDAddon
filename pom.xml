@@ -6,11 +6,11 @@
 
     <groupId>alphahu</groupId>
     <artifactId>WBDAddon</artifactId>
-    <version>1.6.0</version>
+    <version>1.7.0</version>
     <packaging>jar</packaging>
 
     <name>WBDAddon</name>
-    <description>WarZBombDefuse 的第三方附加组件合集：击杀报告、回合伤害统计、比赛状态显示、竞技场饥饿锁定、JourneyMap 桥接、装备槽守卫、比赛投票；并通过 WbdAddonApi 让第三方游戏模式复用这些能力。</description>
+    <description>WarZBombDefuse 的第三方附加组件合集：击杀报告、回合伤害统计、比赛状态显示、竞技场饥饿锁定、JourneyMap 桥接、装备槽守卫、比赛投票、断线重联；并通过 WbdAddonApi 让第三方游戏模式复用这些能力。</description>
 
     <properties>
         <java.version>17</java.version>

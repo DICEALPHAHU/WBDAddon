@@ -91,6 +91,8 @@ public class TechnicalPauseModule implements AddonModule, Listener {
     private String pausedTitle;
     private String pausedSubtitle;
     private String resumedTitle;
+    private String holdTitle;
+    private String holdResumedTitle;
 
     public TechnicalPauseModule(WBDAddon plugin) {
         this.plugin = plugin;
@@ -132,6 +134,10 @@ public class TechnicalPauseModule implements AddonModule, Listener {
                         "&7{team} 请求暂停，剩余 {seconds} 秒");
         this.resumedTitle = plugin.getConfig()
                 .getString("modules.technical-pause.resumed-title", "&a比赛继续");
+        this.holdTitle = plugin.getConfig()
+                .getString("modules.technical-pause.hold-title", "&b等待重连");
+        this.holdResumedTitle = plugin.getConfig()
+                .getString("modules.technical-pause.hold-resumed-title", "&a玩家已重连，比赛继续");
 
         resolveTickTaskField();
         Bukkit.getPluginManager().registerEvents(this, plugin);
@@ -297,6 +303,81 @@ public class TechnicalPauseModule implements AddonModule, Listener {
     }
 
     // ------------------------------------------------------------------
+    // 断线重联等待
+    // ------------------------------------------------------------------
+
+    /**
+     * 掉线等待：把比赛定住，等某名玩家重新连回来。
+     *
+     * <p>和普通技术暂停用的是同一套「停 WBD tick + 冻结玩家」的机制，
+     * 区别在于它<b>没有固定时长</b>——只有重连（{@link #endReconnectHold}）、
+     * 管理员恢复或到达上限才会继续。顶栏显示的是「等待重连」而不是倒计时。
+     *
+     * @param playerName  掉线玩家的名字，只用于显示
+     * @param maxSeconds  最长等待秒数；{@code <= 0} 表示不限时（内部按 1 小时兜底）
+     * @return 已经处于暂停中、或竞技场不存在时返回 false
+     */
+    public boolean startReconnectHold(String arenaId, String playerName, int maxSeconds) {
+        if (pauses.containsKey(arenaId)) {
+            return false;
+        }
+        ArenaSession session = session(arenaId);
+        if (session == null) {
+            return false;
+        }
+        int seconds = maxSeconds <= 0 ? 3600 : Math.max(30, maxSeconds);
+        boolean timersFrozen = freezeTimers && cancelTick(session);
+
+        Pause p = new Pause(session, arenaId, null, seconds,
+                System.currentTimeMillis() + seconds * 1000L, timersFrozen);
+        p.hold = true;
+        p.holdName = playerName;
+        p.bar = Bukkit.createBossBar(holdBarTitle(playerName, seconds),
+                BarColor.BLUE, BarStyle.SOLID);
+        p.bar.setProgress(1.0);
+
+        pauses.put(arenaId, p);
+        if (freezePlayers) {
+            freezeArena(arenaId, p);
+        }
+        for (Player player : Bukkit.getOnlinePlayers()) {
+            if (inArena(player, arenaId)) {
+                p.bar.addPlayer(player);
+            }
+        }
+
+        broadcast(arenaId, "&e[断线重联] &f" + playerName + " &e掉线了，暂停等待重连"
+                + "&7（最长 " + clock(seconds) + "，回来就自动继续）。");
+        for (Player player : Bukkit.getOnlinePlayers()) {
+            if (!inArena(player, arenaId)) continue;
+            player.sendTitle(color(holdTitle), color("&7等待 &f" + playerName + " &7重连"),
+                    10, 70, 20);
+        }
+
+        p.ticker = Bukkit.getScheduler().runTaskTimer(plugin, () -> tick(p), 0L, 20L);
+        if (plugin.getConfig().getBoolean("modules.technical-pause.debug", false)) {
+            plugin.getLogger().info("[technical-pause] " + arenaId + " 等待重连 " + playerName
+                    + "，上限 " + seconds + " 秒，计时器冻结=" + timersFrozen);
+        }
+        return true;
+    }
+
+    /** 重连等待结束（玩家回来了）。不是等待中的暂停时返回 false。 */
+    public boolean endReconnectHold(String arenaId, String reason) {
+        Pause p = pauses.get(arenaId);
+        if (p == null || !p.hold) {
+            return false;
+        }
+        return resume(arenaId, reason);
+    }
+
+    /** 该竞技场此刻是否正在等待重连。 */
+    public boolean isHolding(String arenaId) {
+        Pause p = pauses.get(arenaId);
+        return p != null && p.hold;
+    }
+
+    // ------------------------------------------------------------------
     // 暂停 / 恢复
     // ------------------------------------------------------------------
 
@@ -359,6 +440,16 @@ public class TechnicalPauseModule implements AddonModule, Listener {
         }
         p.frozen.clear();
 
+        if (p.hold) {
+            broadcast(arenaId, "&a[断线重联] " + p.holdName + " 已重连，比赛继续&7（"
+                    + reason + "）。");
+            for (Player player : Bukkit.getOnlinePlayers()) {
+                if (!inArena(player, arenaId)) continue;
+                player.sendTitle(color(holdResumedTitle), "", 5, 30, 10);
+            }
+            return true;
+        }
+
         broadcast(arenaId, "&a[技术暂停] 比赛继续&7（" + reason + "）。");
         for (Player player : Bukkit.getOnlinePlayers()) {
             if (!inArena(player, arenaId)) continue;
@@ -370,15 +461,22 @@ public class TechnicalPauseModule implements AddonModule, Listener {
     private void tick(Pause p) {
         long remaining = p.endMillis - System.currentTimeMillis();
         if (remaining <= 0) {
-            resume(p.arenaId, "时间到");
+            resume(p.arenaId, p.hold ? "等待超时" : "时间到");
             return;
         }
         int seconds = (int) ((remaining + 999) / 1000);
         if (p.bar != null) {
-            p.bar.setTitle(color(pausedTitle) + " " + clock(seconds));
+            p.bar.setTitle(p.hold
+                    ? holdBarTitle(p.holdName, seconds)
+                    : color(pausedTitle) + " " + clock(seconds));
             p.bar.setProgress(Math.max(0.0,
                     Math.min(1.0, remaining / (double) (p.totalSeconds * 1000L))));
         }
+    }
+
+    /** 等待重连的顶部标题：{@code 等待重连 | AlphaHu | 剩余 04:12}。 */
+    private String holdBarTitle(String playerName, int seconds) {
+        return color(holdTitle) + " &7| &f" + playerName + " &7| 剩余 &e" + clock(seconds);
     }
 
     private boolean cancelTick(ArenaSession session) {
@@ -612,6 +710,9 @@ public class TechnicalPauseModule implements AddonModule, Listener {
         final long endMillis;
         final boolean timersFrozen;
         final Set<UUID> frozen = ConcurrentHashMap.newKeySet();
+        /** 是否是「掉线等重连」的暂停：没有固定时长，顶栏文案也不同。 */
+        boolean hold;
+        String holdName;
         BossBar bar;
         BukkitTask ticker;
 

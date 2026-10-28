@@ -95,14 +95,33 @@ public class PositionBackupModule implements AddonModule, Listener {
 
     @Override
     public void onDisable() {
-        // 只在服务器真的在关闭时传回；/wbdaddon reload 这种重载不能把在场玩家踢出去
-        if (restoreOnDisable && Bukkit.getServer().isStopping()) {
+        // 只在服务器真的在关闭时传回；/wbdaddon reload 这种重载不能把在场玩家踢出去。
+        // isStopping() 是 Paper 补的 API，Arclight / 纯 Spigot 上没有这个方
+        // 法——直接调用会抛 NoSuchMethodError，连整个重载流程一起带崩，故反射探测。
+        if (restoreOnDisable && !plugin.isReloading() && isServerStopping()) {
             restoreAll();
         }
         // 记录故意保留：如果是服务器重启，下次登录还要靠它补一次
         save();
         HandlerList.unregisterAll(this);
         plugin.getLogger().info("进场位置兜底已卸载。");
+    }
+
+    /**
+     * 当前服务端是否正在关闭。
+     *
+     * <p>{@code Server#isStopping()} 只有 Paper 系有；拿不到就当作「不是关闭」，
+     * 让重启后的登录补传兜底。这样在 Arclight 上至少不会把插件搞崩。
+     */
+    private boolean isServerStopping() {
+        try {
+            java.lang.reflect.Method method = Bukkit.getServer().getClass()
+                    .getMethod("isStopping");
+            Object value = method.invoke(Bukkit.getServer());
+            return value instanceof Boolean stopping && stopping;
+        } catch (Throwable t) {
+            return false;
+        }
     }
 
     // ------------------------------------------------------------------

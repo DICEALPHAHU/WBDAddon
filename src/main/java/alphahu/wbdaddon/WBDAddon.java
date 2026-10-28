@@ -18,6 +18,7 @@ import alphahu.wbdaddon.module.MatchStatusModule;
 import alphahu.wbdaddon.module.MenuModule;
 import alphahu.wbdaddon.module.ModuleManager;
 import alphahu.wbdaddon.module.PositionBackupModule;
+import alphahu.wbdaddon.module.ReconnectModule;
 import alphahu.wbdaddon.module.RoundEventsModule;
 import alphahu.wbdaddon.module.RoundSummaryModule;
 import alphahu.wbdaddon.module.TeamArmorModule;
@@ -62,6 +63,9 @@ public final class WBDAddon extends JavaPlugin {
 
     /** 模块管理器。 */
     private ModuleManager moduleManager;
+
+    /** 是否正在执行 /wbdaddon reload（模块据此区分「重载」与「服务器关闭」）。 */
+    private volatile boolean reloading;
 
     /**
      * 模式注册表，同时也是对外发布的 {@link WbdAddonApi} 实现。
@@ -144,6 +148,7 @@ public final class WBDAddon extends JavaPlugin {
         moduleManager.register(new MenuModule(this));
         moduleManager.register(new TechnicalPauseModule(this));
         moduleManager.register(new VoteModule(this));
+        moduleManager.register(new ReconnectModule(this));
         moduleManager.register(new JourneyMapModule(this));
 
         // 5. 启用所有模块
@@ -225,9 +230,25 @@ public final class WBDAddon extends JavaPlugin {
      */
     public void reload() {
         reloadConfig();
-        moduleManager.disableAll();
-        moduleManager.enableAll();
+        this.reloading = true;
+        try {
+            moduleManager.disableAll();
+            moduleManager.enableAll();
+        } finally {
+            this.reloading = false;
+        }
         getLogger().info("配置已重载，模块已重新启停。");
+    }
+
+    /**
+     * 当前是否正在执行 {@code /wbdaddon reload}。
+     *
+     * <p>模块的 {@code onDisable} 需要区分「服务器要关了」和「只是重载配置」：
+     * 前者该把玩家传回原位、后者绝不能动玩家。模块自己无法可靠判断，
+     * 由主类在重载期间显式标记。
+     */
+    public boolean isReloading() {
+        return reloading;
     }
 
     /**
