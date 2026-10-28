@@ -67,7 +67,8 @@ WarZBombDefuse 的第三方附加组件合集 —— 击杀报告 / 单人伤害
 - **购买刀**：不用管同款拦截，直接换掉手里那把（刀不要钱，也不退旧刀），背包里不会堆旧刀
 - **购买同类同一把枪**：默认取消本次购买并退款，防止用「买同一把枪」免费补弹；可用 `same-gun-policy` 改成付费换新或替换退款
 - **拾取同类武器**：身上已经有一把时直接拦截，必须先丢掉现有那把才能捡新的
-- 分类来源：TacZSpigotBridge 的 `GunId` + TACZ index `type`；LRTactical 按材质；WBD 的 C4 / 拆弹器按 PDC 标记
+- **分类对照表** `item-categories.yml`：`guns`（按 GunId）/ `names`（按显示名）/ `materials`（按材质）/ `types`（按 TacZ 类型）四张表，腐竹自己决定谁归哪类，自带注释；首次启动按现有 config 生成
+- 分类来源：对照表 > 物品标签 > TacZ `type`；确保非 TacZ 物品也能归类
 - **分类结果写在物品上**（PDC `loadout: primary/secondary/melee/throwable/utility`）：认一次就固定，之后换 TacZ 版本、改 `gun-overrides` 都不会让已发出的武器忽然换类别；认错了用 `/wbdaddon retag` 洗掉重认
 - 线上 8 把 Apex 刀在 TACZ index 里是 `sniper`，配置里已用 `gun-overrides` 覆盖成 `melee`
 - 不改 WBD 的 `shop.yml`，也不影响 `/wbd shopedit`；价格在打开商店时按文件修改时间自动刷新

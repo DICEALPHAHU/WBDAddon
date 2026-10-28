@@ -542,6 +542,10 @@ modules:
     # 排查用：输出分类、替换、退款、归位日志。
     debug: false
 
+    # ⚠ 分类规则已迁到 plugins/WBDAddon/item-categories.yml（优先级最高，自带注释）。
+    #   下面的 tacz-type-categories / gun-overrides / *-materials 仍然兼容，
+    #   但只在 item-categories.yml 没写到的物品上生效；新表首次生成时会抄一份这里的值。
+    #
     # TACZ 枪械类型 -> 类别。
     # TACZ index 里 type 常见值：pistol / rifle / smg / shotgun / sniper / mg / rpg。
     # 没写的类型默认按 primary 处理，并在控制台提示一次。

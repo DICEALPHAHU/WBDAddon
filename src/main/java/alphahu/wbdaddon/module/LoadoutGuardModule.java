@@ -21,6 +21,8 @@ import org.bukkit.ChatColor;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
+import org.bukkit.configuration.ConfigurationSection;
+import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.Item;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
@@ -151,6 +153,12 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
 
     /** 物品分类标签的键（PDC）：primary / secondary / melee / throwable / utility。 */
     private final NamespacedKey tagKey;
+
+    /** item-categories.yml：服主可编辑的分类对照表（优先级最高）。 */
+    private final Map<String, Category> tableGuns = new HashMap<>();
+    private final Map<String, Category> tableNames = new HashMap<>();
+    private final Map<String, Category> tableMaterials = new HashMap<>();
+    private final Map<String, Category> tableTypes = new HashMap<>();
     private boolean dropDuplicates = true;
     private boolean purchaseSafety = true;
     private boolean protectOpenItem = true;
@@ -215,6 +223,7 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
         gunCategoryCache.clear();
 
         loadConfig();
+        loadCategoryTable();
         this.active = true;
 
         // 本模块的类直接引用 TacZSpigotApi；缺桥接时 Bukkit 会拒绝注册事件，
@@ -339,6 +348,111 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
             if (!seen.add(slot)) return false;
         }
         return true;
+    }
+
+    // ------------------------------------------------------------------
+    // 分类对照表（item-categories.yml）
+    // ------------------------------------------------------------------
+
+    /**
+     * 载入服主可编辑的分类对照表。
+     *
+     * <p>它是武器分类的<b>最高优先级</b>：写在表里的物品按表走，
+     * 没写的才继续按 PDC 标签 / TacZ 类型 / 材质推断。
+     * 文件不存在时按当前 config.yml 的旧配置生成一份，保持行为不变。
+     */
+    private void loadCategoryTable() {
+        File file = new File(plugin.getDataFolder(), "item-categories.yml");
+        try {
+            if (!file.exists()) {
+                writeCategoryTemplate(file);
+            }
+            YamlConfiguration yaml = YamlConfiguration.loadConfiguration(file);
+            readCategorySection(yaml, "guns", tableGuns);
+            readCategorySection(yaml, "names", tableNames);
+            readCategorySection(yaml, "materials", tableMaterials);
+            readCategorySection(yaml, "types", tableTypes);
+            plugin.getLogger().info("装备分类对照表已载入：枪械 " + tableGuns.size()
+                    + " / 名称 " + tableNames.size()
+                    + " / 材质 " + tableMaterials.size()
+                    + " / 类型 " + tableTypes.size() + " 条。");
+        } catch (Throwable t) {
+            tableGuns.clear();
+            tableNames.clear();
+            tableMaterials.clear();
+            tableTypes.clear();
+            plugin.getLogger().warning("载入 item-categories.yml 失败，退回 config.yml 的分类规则：" + t);
+        }
+    }
+
+    private void readCategorySection(YamlConfiguration yaml, String section,
+                                     Map<String, Category> target) {
+        target.clear();
+        ConfigurationSection cs = yaml.getConfigurationSection(section);
+        if (cs == null) return;
+        for (String key : cs.getKeys(false)) {
+            Category category = Category.parseTable(cs.getString(key));
+            if (category == null) {
+                plugin.getLogger().warning("item-categories.yml 里 " + section + "." + key
+                        + " 的类别写法无法识别，已忽略。");
+                continue;
+            }
+            target.put(key.trim().toLowerCase(Locale.ROOT), category);
+        }
+    }
+
+    /** 按当前 config.yml 的旧配置生成对照表，保证升级后行为不变。 */
+    private void writeCategoryTemplate(File file) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("# ============================================================\n");
+        sb.append("# 装备分类对照表\n");
+        sb.append("#\n");
+        sb.append("# 决定每件物品属于哪一类，直接决定它能占哪个格子、能不能再买同类。\n");
+        sb.append("# 可选值：primary（主武器）/ secondary（副武器）/ melee（近战）/\n");
+        sb.append("#         throwable（投掷物）/ utility（功能道具，不限购）/ none（不纳入管理）\n");
+        sb.append("#\n");
+        sb.append("# 这张表优先级最高：写了就按表走，没写的才按物品标签 / TacZ 类型 / 材质推断。\n");
+        sb.append("# 改完执行 /wbdaddon reload 生效。\n");
+        sb.append("# ============================================================\n");
+        sb.append("\n");
+        sb.append("# 按 TacZ GunId 指定（大小写不敏感，可省略命名空间 tacz:）\n");
+        sb.append("guns:\n");
+        for (Map.Entry<String, Category> e : gunOverrides.entrySet()) {
+            sb.append("  \"").append(e.getKey()).append("\": ")
+                    .append(e.getValue().key()).append("\n");
+        }
+        sb.append("\n");
+        sb.append("# 按物品显示名指定（去掉颜色码后比较），适合非 TacZ 物品\n");
+        sb.append("names: {}\n");
+        sb.append("\n");
+        sb.append("# 按 Bukkit 材质指定\n");
+        sb.append("materials:\n");
+        appendMaterialEntries(sb, throwableMaterials, "throwable");
+        appendMaterialEntries(sb, meleeMaterials, "melee");
+        appendMaterialEntries(sb, utilityMaterials, "utility");
+        sb.append("\n");
+        sb.append("# 按 TacZ index 里的 type 兜底\n");
+        sb.append("types:\n");
+        for (Map.Entry<String, Category> e : typeCategories.entrySet()) {
+            sb.append("  ").append(e.getKey()).append(": ")
+                    .append(e.getValue().key()).append("\n");
+        }
+
+        try {
+            File parent = file.getParentFile();
+            if (parent != null && !parent.exists()) parent.mkdirs();
+            java.nio.file.Files.writeString(file.toPath(), sb.toString(),
+                    java.nio.charset.StandardCharsets.UTF_8);
+            plugin.getLogger().info("已生成装备分类对照表模板：" + file.getName());
+        } catch (Throwable t) {
+            plugin.getLogger().warning("生成 item-categories.yml 失败：" + t.getMessage());
+        }
+    }
+
+    private void appendMaterialEntries(StringBuilder sb, Set<Material> materials, String category) {
+        for (Material material : materials) {
+            sb.append("  ").append(material.name()).append(": ").append(category).append("\n");
+        }
     }
 
     private void loadTypeCategories(String base) {
@@ -484,14 +598,25 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
     // 分类
     // ------------------------------------------------------------------
 
+    /**
+     * 判定物品类别。
+     *
+     * <p>优先级（先命中先用）：
+     * <ol>
+     *   <li>{@code item-categories.yml} 的 <b>materials</b> —— 服主显式配置，最直观</li>
+     *   <li>WBD 自带的 C4 / 拆弹器标记 → 功能道具</li>
+     *   <li>枪械：{@code item-categories.yml} 的 <b>guns</b> → 物品标签 → TacZ type</li>
+     *   <li>{@code item-categories.yml} 的 <b>names</b> → 物品标签</li>
+     * </ol>
+     */
     private Category classify(ItemStack item) {
         if (item == null || item.getType().isAir()) return Category.NONE;
 
-        // 打过标签的直接信标签：这是「分类结果」而不是「每次现猜」，
-        // 换 TacZ 版本、改 gun-overrides 都不会让已经发出去的武器忽然换类别
-        Category tagged = readTag(item);
-        if (tagged != null) return tagged;
+        // 1. 材质对照表：最直观，也最便宜
+        Category byMaterial = tableMaterials.get(item.getType().name().toLowerCase(Locale.ROOT));
+        if (byMaterial != null) return byMaterial;
 
+        // 2. WBD 自己的标记
         WarZBombDefusePlugin wbd = plugin.getWbd();
         if (wbd != null) {
             String marker = ItemUtil.getMarker(item, wbd);
@@ -501,35 +626,63 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
         }
 
         Material type = item.getType();
+        Category legacyMaterial = legacyMaterialCategory(type);
+        if (legacyMaterial != null) return legacyMaterial;
+
+        // 3. 枪械
+        if (type.name().equals(taczGunMaterialName)) {
+            TacZSpigotApi api = plugin.getTacZApi();
+            if (api == null) {
+                warnOnce("no-tacz-api");
+                return Category.NONE;
+            }
+            String gunId;
+            try {
+                gunId = api.getItemGunId(item).orElse(null);
+            } catch (Throwable t) {
+                warnOnce("no-tacz-api");
+                return Category.NONE;
+            }
+            if (gunId == null) return Category.NONE;
+
+            Category byGun = tableGuns.get(gunId.toLowerCase(Locale.ROOT));
+            if (byGun == null && gunId.contains(":")) {
+                byGun = tableGuns.get(gunId.substring(gunId.indexOf(':') + 1)
+                        .toLowerCase(Locale.ROOT));
+            }
+            if (byGun != null) return byGun;
+
+            Category tagged = readTag(item);
+            if (tagged != null) return tagged;
+
+            Category cached = gunCategoryCache.get(gunId);
+            if (cached != null) return cached;
+
+            Category resolved = resolveGunCategory(api, gunId);
+            gunCategoryCache.put(gunId, resolved);
+            return resolved;
+        }
+
+        // 4. 显示名对照表（非 TacZ 物品、自定义名字的东西）
+        String name = displayName(item);
+        if (!name.isEmpty()) {
+            Category byName = tableNames.get(name.toLowerCase(Locale.ROOT));
+            if (byName != null) return byName;
+        }
+
+        // 5. 物品标签兜底
+        Category tagged = readTag(item);
+        if (tagged != null) return tagged;
+
+        return Category.NONE;
+    }
+
+    /** config.yml 里的旧材质列表（新表没写时继续生效，向下兼容）。 */
+    private Category legacyMaterialCategory(Material type) {
         if (meleeMaterials.contains(type)) return Category.MELEE;
         if (throwableMaterials.contains(type)) return Category.THROWABLE;
         if (utilityMaterials.contains(type)) return Category.UTILITY;
-
-        if (!type.name().equals(taczGunMaterialName)) {
-            return Category.NONE;
-        }
-
-        TacZSpigotApi api = plugin.getTacZApi();
-        if (api == null) {
-            warnOnce("no-tacz-api");
-            return Category.NONE;
-        }
-
-        String gunId;
-        try {
-            gunId = api.getItemGunId(item).orElse(null);
-        } catch (Throwable t) {
-            warnOnce("no-tacz-api");
-            return Category.NONE;
-        }
-        if (gunId == null) return Category.NONE;
-
-        Category cached = gunCategoryCache.get(gunId);
-        if (cached != null) return cached;
-
-        Category resolved = resolveGunCategory(api, gunId);
-        gunCategoryCache.put(gunId, resolved);
-        return resolved;
+        return null;
     }
 
     /** 读取物品上的 WBDAddon 分类标签；没有或无效返回 null。 */
@@ -619,7 +772,11 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
             return Category.PRIMARY;
         }
         if (type != null) {
-            Category mapped = typeCategories.get(type.toLowerCase(Locale.ROOT));
+            String key = type.toLowerCase(Locale.ROOT);
+            Category mapped = tableTypes.get(key);
+            if (mapped == null) {
+                mapped = typeCategories.get(key);
+            }
             if (mapped != null) return mapped;
         }
 
@@ -1880,6 +2037,20 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
 
         Category(String displayName) {
             this.displayName = displayName;
+        }
+
+        /** 对照表用的写法：额外支持 none / ignore / skip 表示「不纳入管理」。 */
+        static Category parseTable(String raw) {
+            if (raw == null) return null;
+            return switch (raw.trim().toLowerCase(Locale.ROOT)) {
+                case "none", "ignore", "skip", "off" -> NONE;
+                default -> parse(raw);
+            };
+        }
+
+        /** 写回对照表时的字符串。 */
+        String key() {
+            return name().toLowerCase(Locale.ROOT);
         }
 
         static Category parse(String raw) {
