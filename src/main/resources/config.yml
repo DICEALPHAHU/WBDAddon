@@ -591,6 +591,8 @@ modules:
       same-gun-blocked: "&c你已装备 %gun%&c，本次购买已取消并退还 &e$%price%"
       same-gun-blocked-free: "&c你已装备 %gun%&c，本次购买已取消。"
       melee-swapped: "&a已换上 &f%new%&7。"
+      buy-blocked: "&c你已装备 %old%&c，本次购买已取消并退还 &e$%price%"
+      buy-blocked-free: "&c你已装备 %old%&c，本次购买已取消。"
       purchase-missing: "&c背包放不下，购买的物品没有给到你，已退还 &e$%price%"
       purchase-missing-free: "&c背包放不下，这次购买的物品没有给到你。"
       slot-restored: "&7购买覆盖了那一格，已把 &f%item% &7放回背包。"

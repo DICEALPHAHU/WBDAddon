@@ -159,6 +159,15 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
     /** 每个类别是否启用（item-categories.yml 的 categories.*.enabled）。 */
     private final Map<Category, Boolean> enabledCategories = new EnumMap<>(Category.class);
 
+    /** 买同类新武器时是否顶掉手里那把（categories.*.on-buy: replace / block）。 */
+    private final Map<Category, Boolean> replaceOnBuy = new EnumMap<>(Category.class);
+
+    /** 买「同一把」时怎么处理（categories.*.same-gun: inherit / replace / block）。 */
+    private final Map<Category, SameGunMode> sameGunModes = new EnumMap<>(Category.class);
+
+    /** 顶掉旧武器时是否退还它的商店价（categories.*.refund-old）。 */
+    private final Map<Category, Boolean> refundOldFlags = new EnumMap<>(Category.class);
+
     /** item-categories.yml：服主可编辑的分类对照表（优先级最高）。 */
     private final Map<String, Category> tableGuns = new HashMap<>();
     private final Map<String, Category> tableNames = new HashMap<>();
@@ -427,9 +436,20 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
      */
     private void loadCategoryRules(YamlConfiguration yaml) {
         enabledCategories.clear();
+        replaceOnBuy.clear();
+        sameGunModes.clear();
+        refundOldFlags.clear();
         for (Category category : new Category[]{Category.PRIMARY, Category.SECONDARY,
                 Category.MELEE, Category.THROWABLE}) {
             enabledCategories.put(category, true);
+            replaceOnBuy.put(category, true);
+            sameGunModes.put(category, SameGunMode.INHERIT);
+            refundOldFlags.put(category, refundOldWeapon);
+        }
+        // 刀不要钱：默认直接换掉手里那把，也不退旧刀
+        if (meleeAlwaysSwap) {
+            sameGunModes.put(Category.MELEE, SameGunMode.REPLACE);
+            refundOldFlags.put(Category.MELEE, false);
         }
 
         ConfigurationSection root = yaml.getConfigurationSection("categories");
@@ -474,6 +494,21 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
                         + ".slot 必须是 0-8，已忽略。");
             }
         }
+        if (section.isSet("on-buy")) {
+            String raw = String.valueOf(section.getString("on-buy", "replace")).trim();
+            replaceOnBuy.put(category, !"block".equalsIgnoreCase(raw) && !"off".equalsIgnoreCase(raw));
+        }
+        if (section.isSet("same-gun")) {
+            String raw = String.valueOf(section.getString("same-gun", "inherit")).trim();
+            sameGunModes.put(category, switch (raw.toLowerCase(Locale.ROOT)) {
+                case "replace", "swap" -> SameGunMode.REPLACE;
+                case "block", "deny" -> SameGunMode.BLOCK;
+                default -> SameGunMode.INHERIT;
+            });
+        }
+        if (section.isSet("refund-old")) {
+            refundOldFlags.put(category, section.getBoolean("refund-old", true));
+        }
         if (section.isSet("limit")) {
             int limit = Math.max(0, section.getInt("limit", 1));
             switch (category) {
@@ -501,9 +536,12 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
         sb.append("# 不写或删掉这一段，就沿用 config.yml 里的 slots / limits。\n");
         sb.append("# ============================================================\n");
         sb.append("categories:\n");
-        sb.append("  primary:\n    enabled: true\n    slot: ").append(primarySlot).append("\n");
-        sb.append("  secondary:\n    enabled: true\n    slot: ").append(secondarySlot).append("\n");
-        sb.append("  melee:\n    enabled: true\n    slot: ").append(meleeSlot).append("\n");
+        sb.append("  primary:\n    enabled: true\n    slot: ").append(primarySlot)
+                .append("\n    on-buy: replace\n    same-gun: inherit\n    refund-old: true\n");
+        sb.append("  secondary:\n    enabled: true\n    slot: ").append(secondarySlot)
+                .append("\n    on-buy: replace\n    same-gun: inherit\n    refund-old: true\n");
+        sb.append("  melee:\n    enabled: true\n    slot: ").append(meleeSlot)
+                .append("\n    on-buy: replace\n    same-gun: replace\n    refund-old: false\n");
         sb.append("  throwable:\n    enabled: true\n    slot: ").append(throwableSlot)
                 .append("\n    limit: ").append(Math.max(0, throwableLimit)).append("\n");
 
@@ -559,9 +597,12 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
         sb.append("#   limit 只对 throwable 有意义（0 = 不限）\n");
         sb.append("# ============================================================\n");
         sb.append("categories:\n");
-        sb.append("  primary:\n    enabled: true\n    slot: ").append(primarySlot).append("\n");
-        sb.append("  secondary:\n    enabled: true\n    slot: ").append(secondarySlot).append("\n");
-        sb.append("  melee:\n    enabled: true\n    slot: ").append(meleeSlot).append("\n");
+        sb.append("  primary:\n    enabled: true\n    slot: ").append(primarySlot)
+                .append("\n    on-buy: replace\n    same-gun: inherit\n    refund-old: true\n");
+        sb.append("  secondary:\n    enabled: true\n    slot: ").append(secondarySlot)
+                .append("\n    on-buy: replace\n    same-gun: inherit\n    refund-old: true\n");
+        sb.append("  melee:\n    enabled: true\n    slot: ").append(meleeSlot)
+                .append("\n    on-buy: replace\n    same-gun: replace\n    refund-old: false\n");
         sb.append("  throwable:\n    enabled: true\n    slot: ").append(throwableSlot)
                 .append("\n    limit: ").append(Math.max(0, throwableLimit)).append("\n");
         sb.append("\n");
@@ -1643,8 +1684,16 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
         }
 
         boolean same = sameItem(oldItem.item, newItem.item);
-        boolean meleeSwap = category == Category.MELEE && meleeAlwaysSwap;
-        if (same && sameGunPolicy == SameGunPolicy.BLOCK && !meleeSwap) {
+
+        // 同一把枪：先看这个类别的 same-gun 策略，没配就沿用全局 same-gun-policy
+        SameGunMode mode = sameGunModes.getOrDefault(category, SameGunMode.INHERIT);
+        SameGunPolicy policy = switch (mode) {
+            case BLOCK -> SameGunPolicy.BLOCK;
+            case REPLACE -> SameGunPolicy.REPLACE_NO_REFUND;
+            case INHERIT -> sameGunPolicy;
+        };
+
+        if (same && policy == SameGunPolicy.BLOCK) {
             setItemAt(inventory, newItem.slot, null);
             if (price > 0) {
                 refund(session, player, price);
@@ -1662,22 +1711,31 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
             return;
         }
 
-        if (meleeSwap) {
-            // 刀不要钱，也别留一把旧的占地方：直接把手里的那把换掉
+        // 不同枪但同类：这个类别配了「不顶掉」就拒绝购买
+        if (!same && !replaceOnBuy.getOrDefault(category, Boolean.TRUE)) {
+            setItemAt(inventory, newItem.slot, null);
             String oldName = itemName(oldItem.item);
-            String newName = itemName(newItem.item);
-            setItemAt(inventory, oldItem.slot, null);
-            moveItem(player, newItem.item, newItem.slot, targetSlot);
-            msg(player, "melee-swapped", Map.of("old", oldName, "new", newName));
+            if (price > 0) {
+                refund(session, player, price);
+                msg(player, "buy-blocked", Map.of(
+                        "old", oldName,
+                        "new", itemName(newItem.item),
+                        "price", String.valueOf(price)));
+            } else {
+                msg(player, "buy-blocked-free", Map.of(
+                        "old", oldName,
+                        "new", itemName(newItem.item)));
+            }
             if (debug) {
-                plugin.getLogger().info("[loadout] " + player.getName() + " 换刀 "
-                        + oldName + " -> " + newName + "（直接替换）");
+                plugin.getLogger().info("[loadout] " + player.getName() + " 已装备 "
+                        + oldName + "，按类别策略取消购买 " + itemName(newItem.item));
             }
             return;
         }
 
         int refund = 0;
-        if (refundOldWeapon && !(same && sameGunPolicy == SameGunPolicy.REPLACE_NO_REFUND)) {
+        boolean refundOld = refundOldFlags.getOrDefault(category, refundOldWeapon);
+        if (refundOld && policy != SameGunPolicy.REPLACE_NO_REFUND) {
             refund = refundPrice(oldItem.item);
         }
 
@@ -1689,7 +1747,9 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
         }
         moveItem(player, newItem.item, newItem.slot, targetSlot);
 
-        if (refund > 0) {
+        if (category == Category.MELEE) {
+            msg(player, "melee-swapped", Map.of("old", oldName, "new", newName));
+        } else if (refund > 0) {
             msg(player, "replaced", Map.of(
                     "old", oldName,
                     "new", newName,
@@ -2169,6 +2229,13 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
                 default -> SNEAK_SWAP_HANDS;
             };
         }
+    }
+
+    /** 每个类别「买同一把枪」时的策略；inherit = 沿用全局 same-gun-policy。 */
+    private enum SameGunMode {
+        INHERIT,
+        REPLACE,
+        BLOCK
     }
 
     private enum SameGunPolicy {
