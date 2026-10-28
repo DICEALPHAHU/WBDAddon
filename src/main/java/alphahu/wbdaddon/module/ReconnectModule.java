@@ -23,6 +23,8 @@ import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.scheduler.BukkitTask;
 
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -42,21 +44,23 @@ import java.util.concurrent.ConcurrentHashMap;
  * 期间加入的玩家会被记成「排队等下一回合」，即使在冻结点暂停也救不回来；
  * 而在 {@code ROUND_END} 加入的玩家正好是排队状态，一恢复就跟着下一回合出生。
  *
- * <p>每支队伍每场只有一次这样的待遇（CS 里的战术暂停思路），
- * 用过之后再有人掉线只会提示一句，不会再把比赛定住。
+ * <h2>多人掉线</h2>
  *
- * <h2>回来时</h2>
+ * <p>一次暂停可以同时等好几个人，而不是谁先掉谁独占：
  *
- * <p>玩家重新连上服务器后会自动放回原比赛的原阵营，并把掉线前的
- * 经济、击杀、死亡、下包、拆包数据原样写回新的 {@code PlayerRecord}
- * （WBD 掉线时会直接删记录，不写回就相当于全部清零）。
+ * <ul>
+ *   <li>同一时间掉好几个人（网络抖动、同一队集体掉线）：<b>只停一次表</b>，
+ *       所有人一起等；回来一个就把他从名单里划掉，顶栏显示还剩谁。</li>
+ *   <li>名额按「阵营」算，不按人头：同一队三个人一起掉，只消耗该队这一次待遇。</li>
+ *   <li>暂停期间又有人掉线，算进同一次等待（暂停总时长不会因此延长）。</li>
+ * </ul>
  *
  * <h2>两个时间窗</h2>
  *
  * <p>「等」和「算不算重连」是两件事：
  *
  * <ul>
- *   <li>{@code hold-max-seconds}（默认 60 秒）：比赛最多为他停多久。到点就继续，
+ *   <li>{@code hold-max-seconds}（默认 60 秒）：比赛最多为他们停多久。到点就继续，
  *       不能让九个人陪一个人干等。</li>
  *   <li>{@code pending-max-seconds}（默认 300 秒）：掉线后多久之内回来还算「重连」。
  *       这段时间里回来，哪怕比赛早就继续了，也会自动放回原阵营并写回数据；
@@ -72,11 +76,11 @@ public class ReconnectModule implements AddonModule, Listener {
     /** 掉线待归的玩家，key = 玩家 UUID。 */
     private final Map<UUID, Reconnect> pending = new ConcurrentHashMap<>();
 
-    /** 等待重连的竞技场，key = 竞技场 ID。同一时间每张图只守一个人。 */
-    private final Map<String, Reconnect> waiting = new ConcurrentHashMap<>();
+    /** 本次等待覆盖的玩家，key = 竞技场 ID。集合存在就说明这次「等待」还没结束。 */
+    private final Map<String, Set<UUID>> waiting = new ConcurrentHashMap<>();
 
-    /** 已经真正暂停住的竞技场，key = 竞技场 ID。 */
-    private final Map<String, Reconnect> holding = new ConcurrentHashMap<>();
+    /** 已经真正把 tick 停住的竞技场。 */
+    private final Set<String> holding = ConcurrentHashMap.newKeySet();
 
     /** 每场每队是否已经用过重连等待，key = 竞技场 ID。 */
     private final Map<String, Set<Team>> used = new ConcurrentHashMap<>();
@@ -124,7 +128,7 @@ public class ReconnectModule implements AddonModule, Listener {
         plugin.getLogger().info("断线重联已启动：每队每场 1 次等待，最多等 "
                 + (holdMaxSeconds <= 0 ? "不限时" : holdMaxSeconds + " 秒")
                 + "；" + (pendingMaxSeconds <= 0 ? "不限时" : pendingMaxSeconds + " 秒")
-                + "内回来仍算重连并继承经济与战绩。");
+                + "内回来仍算重连并继承经济与战绩（多人掉线共用同一次暂停）。");
     }
 
     @Override
@@ -133,7 +137,7 @@ public class ReconnectModule implements AddonModule, Listener {
             ticker.cancel();
             ticker = null;
         }
-        for (String arenaId : new ArrayList<>(holding.keySet())) {
+        for (String arenaId : new ArrayList<>(holding)) {
             TechnicalPauseModule pause = pauseModule();
             if (pause != null) {
                 pause.endReconnectHold(arenaId, "插件卸载");
@@ -190,45 +194,75 @@ public class ReconnectModule implements AddonModule, Listener {
                 record.getKills(), record.getDeaths(), record.getPlants(), record.getDefuses());
         pending.put(r.uuid, r);
 
-        if (!claim(session.getConfig().getId(), team)) {
-            broadcast(r.arenaId, "&7[断线重联] " + r.name + " 掉线了&7（本队本场已经用过等待重连）。");
+        Set<UUID> covered = cover(r);
+        if (covered == null) {
+            broadcast(r.arenaId, "&7[断线重联] " + r.name + " 掉线了"
+                    + "&7（本队本场已经用过等待重连）。");
             return;
         }
+        covered.add(r.uuid);
 
-        broadcast(r.arenaId, "&e[断线重联] " + r.name + " 掉线了，"
-                + "下一回合暂停等待他回来&7（本队本场第 1 次，"
+        broadcast(r.arenaId, "&e[断线重联] " + r.name + " 掉线了，下一回合暂停等待"
+                + (covered.size() > 1 ? "他们 " + covered.size() + " 人" : "他回来")
+                + "&7（本队本场第 1 次，"
                 + (holdMaxSeconds <= 0 ? "不限时" : "最多等 " + holdMaxSeconds + " 秒")
                 + (pendingMaxSeconds <= 0 ? "" : "；" + (pendingMaxSeconds / 60) + " 分钟内回来都算重连")
                 + "）。");
-        waiting.put(r.arenaId, r);
         if (state == GameState.ROUND_END) {
-            startHold(r);
+            startHold(r.arenaId);
         }
         debug("掉线记录 " + r.name + " @ " + r.arenaId + "，经济 " + r.money
-                + "，战绩 " + r.kills + "/" + r.deaths);
+                + "，战绩 " + r.kills + "/" + r.deaths + "，本次等待 " + covered.size() + " 人");
+    }
+
+    /**
+     * 把这次掉线纳入等待。
+     *
+     * <p>名额按阵营算：只要他所在的阵营这一场还没用过等待，就消耗掉；
+     * 而只要此刻已经有一次等待在进行，本次掉线就直接并进去——
+     * 一波掉几个人不重复消耗名额，也不会让后来掉的人被关在门外。
+     *
+     * @return 本次等待的玩家集合；不该为他停表时返回 null
+     */
+    private Set<UUID> cover(Reconnect r) {
+        boolean fresh = claim(r.arenaId, r.team);
+
+        Set<UUID> existing = waiting.get(r.arenaId);
+        if (existing != null) {
+            return existing;
+        }
+        if (!fresh) {
+            return null;
+        }
+        Set<UUID> created = ConcurrentHashMap.newKeySet();
+        Set<UUID> previous = waiting.putIfAbsent(r.arenaId, created);
+        return previous != null ? previous : created;
     }
 
     /** 回合打完、下一回合还没开始的这一瞬间，是唯一能把人塞回去的位置。 */
     @EventHandler
     public void onRoundEnd(WbdRoundEndEvent event) {
-        Reconnect r = waiting.get(event.getArenaId());
-        if (r == null || !pending.containsKey(r.uuid)) {
-            waiting.remove(event.getArenaId());
+        String arenaId = event.getArenaId();
+        if (!waiting.containsKey(arenaId)) {
             return;
         }
-        startHold(r);
+        if (!hasPending(arenaId)) {
+            waiting.remove(arenaId);
+            return;
+        }
+        startHold(arenaId);
     }
 
     /** 回合真的开始了：说明等待已被绕过（管理员恢复 / 超时），不再重复守。 */
     @EventHandler
     public void onRoundStart(WbdRoundStartEvent event) {
+        String arenaId = event.getArenaId();
         if (event.getRound() <= 1) {
-            used.remove(event.getArenaId());
+            used.remove(arenaId);
         }
-        Reconnect r = waiting.get(event.getArenaId());
-        if (r != null && !holding.containsKey(event.getArenaId())) {
-            waiting.remove(event.getArenaId());
-            debug("等待被绕过：" + r.name + " @ " + event.getArenaId());
+        if (waiting.containsKey(arenaId) && !holding.contains(arenaId)) {
+            waiting.remove(arenaId);
+            debug("等待被绕过 @" + arenaId);
         }
     }
 
@@ -263,29 +297,25 @@ public class ReconnectModule implements AddonModule, Listener {
         }
         if (expired(r)) {
             // 超过重联窗口：按弃赛处理，记录一删，回来就是个普通玩家
-            pending.remove(r.uuid, r);
-            clearWait(r);
+            forget(r);
             player.sendMessage(color("&7你断线超过 " + (pendingMaxSeconds / 60)
                     + " 分钟，本场已按弃赛处理。"));
             debug("超过重联窗口，放弃 " + r.name);
             return;
         }
         if (!autoRejoin) {
-            pending.remove(r.uuid);
-            clearWait(r);
+            forgive(r);
             return;
         }
 
         ArenaSession session = session(r.arenaId);
         if (session == null || session.getState() == GameState.WAITING) {
-            pending.remove(r.uuid);
-            clearWait(r);
+            forgive(r);
             return;
         }
         // 已经自己挤进别的房间了，就别硬拉回来
         if (plugin.getApi() != null && plugin.getApi().getModeFor(player) != null) {
-            pending.remove(r.uuid);
-            clearWait(r);
+            forgive(r);
             return;
         }
 
@@ -297,15 +327,13 @@ public class ReconnectModule implements AddonModule, Listener {
             joined = false;
         }
         if (!joined) {
-            pending.remove(r.uuid);
-            clearWait(r);
+            forgive(r);
             player.sendMessage(color("&c重连失败：原比赛已经无法加入。"));
             return;
         }
 
         restore(session, player, r);
-        pending.remove(r.uuid);
-        clearWait(r);
+        forgive(r);
 
         broadcast(r.arenaId, "&a[断线重联] " + r.name + " 已重连，回到原阵营。");
         debug("重连成功 " + r.name + " @ " + r.arenaId + "，已写回经济与战绩");
@@ -337,38 +365,80 @@ public class ReconnectModule implements AddonModule, Listener {
     // 等待
     // ------------------------------------------------------------------
 
-    private void startHold(Reconnect r) {
+    private void startHold(String arenaId) {
+        List<String> names = namesOf(arenaId);
+        if (names.isEmpty()) {
+            waiting.remove(arenaId);
+            return;
+        }
         TechnicalPauseModule pause = pauseModule();
-        if (pause == null) {
-            waiting.remove(r.arenaId);
+        if (pause == null
+                || !pause.startReconnectHold(arenaId, label(names), holdMaxSeconds)) {
+            waiting.remove(arenaId);
+            debug("开始等待失败（可能已经在暂停中）：" + arenaId);
             return;
         }
-        if (!pause.startReconnectHold(r.arenaId, r.name, holdMaxSeconds)) {
-            waiting.remove(r.arenaId);
-            debug("开始等待失败（可能已经在暂停中）：" + r.arenaId);
-            return;
-        }
-        holding.put(r.arenaId, r);
-        debug("开始等待重连 " + r.name + " @ " + r.arenaId);
+        holding.add(arenaId);
+        debug("开始等待重连 " + names + " @ " + arenaId);
     }
 
-    /** 等待不再需要（人回来了 / 比赛结束）。 */
-    private void clearWait(Reconnect r) {
-        waiting.remove(r.arenaId, r);
-        if (holding.remove(r.arenaId, r)) {
+    /**
+     * 人回来了（或者不打算再等他）：把他从名单里划掉。
+     * 名单空了才真正恢复比赛——所以两个人一起掉、回来一个，比赛不会提前开。
+     */
+    private void forgive(Reconnect r) {
+        pending.remove(r.uuid, r);
+        Set<UUID> set = waiting.get(r.arenaId);
+        if (set != null) {
+            set.remove(r.uuid);
+        }
+        if (!hasPending(r.arenaId)) {
+            endHold(r.arenaId, "玩家已重连");
+        } else {
+            updateLabel(r.arenaId);
+        }
+    }
+
+    /** 彻底不再等他（超出重联窗口 / 比赛结束）。 */
+    private void forget(Reconnect r) {
+        pending.remove(r.uuid, r);
+        Set<UUID> set = waiting.get(r.arenaId);
+        if (set != null) {
+            set.remove(r.uuid);
+        }
+        if (!hasPending(r.arenaId)) {
+            endHold(r.arenaId, "已按弃赛处理");
+        } else {
+            updateLabel(r.arenaId);
+        }
+    }
+
+    private void endHold(String arenaId, String reason) {
+        waiting.remove(arenaId);
+        if (holding.remove(arenaId)) {
             TechnicalPauseModule pause = pauseModule();
             if (pause != null) {
-                pause.endReconnectHold(r.arenaId, "玩家已重连");
+                pause.endReconnectHold(arenaId, reason);
             }
+        }
+    }
+
+    /** 名单变了就刷新顶栏，让人知道还在等谁。 */
+    private void updateLabel(String arenaId) {
+        if (!holding.contains(arenaId)) {
+            return;
+        }
+        TechnicalPauseModule pause = pauseModule();
+        if (pause != null) {
+            pause.updateReconnectHold(arenaId, label(namesOf(arenaId)));
         }
     }
 
     /**
      * 每秒核对一次。
      *
-     * <p>两件事：等待被超时 / 管理员 / 投票结束了就把状态收干净；
-     * 以及把超过重联窗口还没回来的记录清掉——过了这个点他就不算「掉线待归」，
-     * 回来也当普通玩家处理。
+     * <p>三件事：清理超过重联窗口的记录；等待被超时 / 管理员 / 投票结束了就收干净；
+     * 以及刷新顶栏上还在等的人。
      */
     private void tick() {
         expirePending();
@@ -377,17 +447,17 @@ public class ReconnectModule implements AddonModule, Listener {
             return;
         }
         TechnicalPauseModule pause = pauseModule();
-        for (Map.Entry<String, Reconnect> entry : new ArrayList<>(holding.entrySet())) {
-            String arenaId = entry.getKey();
-            if (pause != null && pause.isHolding(arenaId)) {
+        for (String arenaId : new ArrayList<>(holding)) {
+            if (pause == null || !pause.isHolding(arenaId)) {
+                holding.remove(arenaId);
+                Reconnect r = firstPending(arenaId);
+                waiting.remove(arenaId);
+                broadcast(arenaId, "&7[断线重联] 等待已结束"
+                        + (r == null ? "" : "，" + r.name + " 仍未回来") + "。");
+                debug("等待结束 @" + arenaId);
                 continue;
             }
-            holding.remove(arenaId);
-            Reconnect r = waiting.remove(arenaId);
-            if (r != null) {
-                broadcast(arenaId, "&7[断线重联] 等待已结束，" + r.name + " 仍未回来。");
-                debug("等待结束 " + r.name + " @ " + arenaId);
-            }
+            updateLabel(arenaId);
         }
     }
 
@@ -400,15 +470,75 @@ public class ReconnectModule implements AddonModule, Listener {
             if (!expired(r) || !pending.remove(r.uuid, r)) {
                 continue;
             }
-            clearWait(r);
+            Set<UUID> set = waiting.get(r.arenaId);
+            if (set != null) {
+                set.remove(r.uuid);
+            }
+            if (!hasPending(r.arenaId)) {
+                endHold(r.arenaId, "已按弃赛处理");
+            } else {
+                updateLabel(r.arenaId);
+            }
             debug("超过重联窗口，放弃等待 " + r.name + " @ " + r.arenaId);
         }
     }
 
-    /** 掉线后是否已经超过重联窗口（0 表示不限）。 */
-    private boolean expired(Reconnect r) {
-        return pendingMaxSeconds > 0
-                && System.currentTimeMillis() - r.createdAt > pendingMaxSeconds * 1000L;
+    // ------------------------------------------------------------------
+    // 名单
+    // ------------------------------------------------------------------
+
+    /** 本次等待里还在掉线状态的名字。 */
+    private List<String> namesOf(String arenaId) {
+        List<String> names = new ArrayList<>();
+        Set<UUID> set = waiting.get(arenaId);
+        if (set == null) {
+            return names;
+        }
+        for (UUID id : set) {
+            Reconnect r = pending.get(id);
+            if (r != null) {
+                names.add(r.name);
+            }
+        }
+        return names;
+    }
+
+    private boolean hasPending(String arenaId) {
+        Set<UUID> set = waiting.get(arenaId);
+        if (set == null || set.isEmpty()) {
+            return false;
+        }
+        for (UUID id : set) {
+            if (pending.containsKey(id)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private Reconnect firstPending(String arenaId) {
+        Set<UUID> set = waiting.get(arenaId);
+        if (set == null) {
+            return null;
+        }
+        for (UUID id : set) {
+            Reconnect r = pending.get(id);
+            if (r != null) {
+                return r;
+            }
+        }
+        return null;
+    }
+
+    /** {@code AlphaHu} / {@code AlphaHu 等 3 人}。 */
+    private String label(List<String> names) {
+        if (names.isEmpty()) {
+            return "玩家";
+        }
+        if (names.size() == 1) {
+            return names.get(0);
+        }
+        return names.get(0) + " 等 " + names.size() + " 人";
     }
 
     // ------------------------------------------------------------------
@@ -418,6 +548,12 @@ public class ReconnectModule implements AddonModule, Listener {
     /** 领取本队本场的重连等待名额。 */
     private boolean claim(String arenaId, Team team) {
         return used.computeIfAbsent(arenaId, k -> ConcurrentHashMap.newKeySet()).add(team);
+    }
+
+    /** 掉线后是否已经超过重联窗口（0 表示不限）。 */
+    private boolean expired(Reconnect r) {
+        return pendingMaxSeconds > 0
+                && System.currentTimeMillis() - r.createdAt > pendingMaxSeconds * 1000L;
     }
 
     private TechnicalPauseModule pauseModule() {

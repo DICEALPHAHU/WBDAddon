@@ -377,6 +377,24 @@ public class TechnicalPauseModule implements AddonModule, Listener {
         return p != null && p.hold;
     }
 
+    /**
+     * 刷新等待重连的显示文本。
+     *
+     * <p>多人同时掉线时，名单会随着有人回来而变短，顶栏要跟着改
+     * （{@code AlphaHu 等 3 人} → {@code Steve 等 2 人}）。
+     */
+    public void updateReconnectHold(String arenaId, String label) {
+        Pause p = pauses.get(arenaId);
+        if (p == null || !p.hold || label == null || label.isBlank()) {
+            return;
+        }
+        p.holdName = label;
+        long remaining = p.endMillis - System.currentTimeMillis();
+        if (p.bar != null && remaining > 0) {
+            p.bar.setTitle(holdBarTitle(label, (int) ((remaining + 999) / 1000)));
+        }
+    }
+
     // ------------------------------------------------------------------
     // 暂停 / 恢复
     // ------------------------------------------------------------------
