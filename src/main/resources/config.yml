@@ -468,9 +468,10 @@ modules:
   #
   # 说明：
   #   1. 这里不修改 WBD 的 shop.yml；价格从 WBD 已加载的 shop.yml 读取。
-  #   2. TACZ 枪械按 TacZSpigotBridge 的 GunId + index type 分类。
-  #   3. 线上那 8 把 Apex 刀在 TACZ index 里是 sniper，必须在 gun-overrides
-  #      里覆盖成 melee，否则会被当成主武器。
+  #   2. 分类规则在 plugins/WBDAddon/item-categories.yml（guns / names /
+  #      materials / types 四张表 + categories 开关与落点），这里只留兼容配置。
+  #   3. 有些近战模组的刀在 TACZ index 里是 sniper，需要在 item-categories.yml
+  #      的 guns 里覆盖成 melee，否则会被当成主武器。
   # ----------------------------------------------------------
   loadout-guard:
     enabled: true
@@ -560,19 +561,13 @@ modules:
       melee: melee
 
     # 单把枪的类别覆盖，优先级高于 tacz-type-categories。
-    # 这 8 把是 Apex 近战刀：TACZ index 里被标成 sniper，必须覆盖成 melee。
-    gun-overrides:
-      "twx:twx_kw": melee
-      "twx:twx_nbejd": melee
-      "twx:twx_hdd": melee
-      "twx:twx_sc": melee
-      "twx:twx_nlj": melee
-      "twx:twx_mqzz": melee
-      "twx:twx_xsd": melee
-      "twx:twx_mk": melee
+    # 例：某些近战模组的刀在 TACZ index 里被标成 sniper，就在这里改成 melee：
+    #   "tacz:some_knife": melee
+    gun-overrides: {}
 
     # 材质 -> 类别。按 Bukkit Material 名称填写；
-    # 当前服务端不存在的材质会被忽略。
+    # 当前服务端不存在的材质会被忽略，所以下面这些默认值只为方便
+    # LRTactical / TacZ 用户，没装对应模组时不会报错。
     throwable-materials:
       - LRTACTICAL_THROWABLE
     melee-materials:

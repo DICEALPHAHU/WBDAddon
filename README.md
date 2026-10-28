@@ -35,7 +35,7 @@ WarZBombDefuse 的第三方附加组件合集 —— 击杀报告 / 单人伤害
 
 ### 击杀报告（kill-reports）
 - 淘汰提示显示击杀者与武器（TacZ 枪械按 GunId 人性化改名：`tacz:p320 → P320`）
-- **武器名转换表** `weapon-names.yml`：把 `twx:twx_pxbq → TWX PXBQ` 改成「VK47 平行步枪」这类名字，击杀播报、回合趣闻、`%weapon%` 占位符统一生效；首次启动自动生成含全部 GunId 的模板
+- **武器名转换表** `weapon-names.yml`：把 `tacz:ak47 → AK 47` 改成「AK-47」这类自定义名字，击杀播报、回合趣闻、`%weapon%` 占位符统一生效；首次启动自动生成含全部 GunId 的模板
 - **伤害统计单独发给每个玩家**：「你对 XX 造成了 X 伤害」，不全局刷屏
 - 修正 TacZ 致死伤害在 Forge 层漏记的问题，**血包回血场景下也能正确累计真实总伤害**
 
@@ -71,7 +71,7 @@ WarZBombDefuse 的第三方附加组件合集 —— 击杀报告 / 单人伤害
 - **类别开关与落点**：同一张表的 `categories:` 段可以单独关掉某个类别（不锁格子 / 不限购 / 不拦截拾取），并指定它占哪个快捷栏格子
 - 分类来源：对照表 > 物品标签 > TacZ `type`；确保非 TacZ 物品也能归类
 - **分类结果写在物品上**（PDC `loadout: primary/secondary/melee/throwable/utility`）：认一次就固定，之后换 TacZ 版本、改 `gun-overrides` 都不会让已发出的武器忽然换类别；认错了用 `/wbdaddon retag` 洗掉重认
-- 线上 8 把 Apex 刀在 TACZ index 里是 `sniper`，配置里已用 `gun-overrides` 覆盖成 `melee`
+- 近战模组的刀常常在 TACZ index 里被标成 `sniper`，在 `item-categories.yml` 的 `guns` 里覆盖成 `melee` 即可
 - 不改 WBD 的 `shop.yml`，也不影响 `/wbd shopedit`；价格在打开商店时按文件修改时间自动刷新
 - **绿宝石保护**：商店开物品不能丢弃、不能换到副手，被拖走/顶掉/清掉后自动放回固定槽位
 - **连按开商店**：默认 450ms 内连按两下 F（`double-swap`），单按 F 仍是原版换手；也可换成单按 F、连按两下 Shift，或关掉。`sneak-swap-hands`（Shift+F）留给 `/wbda` 菜单用
@@ -225,15 +225,7 @@ modules:
     same-gun-policy: block          # block / replace-no-refund / replace-refund
     refund-old-weapon: true         # 替换不同武器时退旧武器商店价
     drop-duplicates: true           # 多出的同类丢到脚下
-    gun-overrides:                  # 8 把 Apex 刀在 TACZ index 里是 sniper
-      "twx:twx_kw": melee
-      "twx:twx_nbejd": melee
-      "twx:twx_hdd": melee
-      "twx:twx_sc": melee
-      "twx:twx_nlj": melee
-      "twx:twx_mqzz": melee
-      "twx:twx_xsd": melee
-      "twx:twx_mk": melee
+    gun-overrides: {}               # 例："tacz:some_knife": melee
   vote:
     enabled: true
     duration-seconds: 30            # 一次投票持续多久

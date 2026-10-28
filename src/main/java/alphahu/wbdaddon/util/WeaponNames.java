@@ -118,8 +118,8 @@ public final class WeaponNames {
         sb.append("# 武器名转换表\n");
         sb.append("#\n");
         sb.append("# 击杀播报里的 %weapon% 取这里配置的名字，没配的仍按 GunId 自动转换。\n");
-        sb.append("#   \"twx:twx_pxbq\": \"VK47 平行步枪\"\n");
-        sb.append("#   → AlphaHu 使用 VK47 平行步枪 淘汰了 Steve\n");
+        sb.append("#   \"tacz:ak47\": \"AK-47\"\n");
+        sb.append("#   → AlphaHu 使用 AK-47 淘汰了 Steve\n");
         sb.append("#\n");
         sb.append("# 匹配规则：\n");
         sb.append("#   · 大小写不敏感\n");
@@ -218,7 +218,7 @@ public final class WeaponNames {
         return item.getType().name().toLowerCase().replace("_", " ");
     }
 
-    /** tacz:p320 → P320；tacz:ar_15 → AR 15；tacz:twx_r201 → TWX R201 */
+    /** tacz:p320 → P320；tacz:ar_15 → AR 15；tacz:ump45 → UMP45 */
     public static String humanizeGunId(String gunId) {
         String id = gunId.contains(":") ? gunId.substring(gunId.indexOf(':') + 1) : gunId;
         return Arrays.stream(id.split("_"))

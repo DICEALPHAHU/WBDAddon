@@ -111,3 +111,6 @@ buildNumber.properties
 
 # Common working directory
 run/
+
+# 发帖草稿：只在本地维护，不进仓库
+docs/minebbs-*.md

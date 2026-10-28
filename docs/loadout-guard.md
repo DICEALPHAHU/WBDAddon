@@ -8,7 +8,7 @@
 | --- | --- | --- | --- |
 | 主武器 `primary` | 快捷栏第 1 格（index 0） | 1 把 | 步枪 / 冲锋枪 / 霰弹枪 / 轻机枪 / 精确射手 / 狙击枪 |
 | 副武器 `secondary` | 第 2 格（index 1） | 1 把 | 手枪 |
-| 近战 `melee` | 第 3 格（index 2） | 1 把 | 8 把 Apex 刀 + 以后加的 LRTactical 近战 |
+| 近战 `melee` | 第 3 格（index 2） | 1 把 | LRTactical 近战 / 被标成 `melee` 的刀 |
 | 投掷物 `throwable` | 第 4 格（index 3） | 4 颗 | 第 4 格放一堆，其余在背包 |
 | 功能 `utility` | 不固定 | 不限 | 配件、拆弹器、医疗包、C4 |
 
@@ -42,18 +42,11 @@
 3. 再查 `TacZSpigotBridge.getGun(id).type()`，用 `tacz-type-categories` 映射；
 4. 没映射的类型按 `primary` 处理，并在控制台提示一次。
 
-线上 8 把 Apex 刀在 TACZ index 里是 `type: sniper`，所以必须在 `gun-overrides` 里覆盖成 `melee`：
+有些近战模组的刀在 TACZ index 里是 `type: sniper`，需要在 `item-categories.yml` 的 `guns` 里覆盖成 `melee`：
 
 ```yaml
 gun-overrides:
-  "twx:twx_kw": melee
-  "twx:twx_nbejd": melee
-  "twx:twx_hdd": melee
-  "twx:twx_sc": melee
-  "twx:twx_nlj": melee
-  "twx:twx_mqzz": melee
-  "twx:twx_xsd": melee
-  "twx:twx_mk": melee
+  "tacz:some_knife": melee
 ```
 
 ### LRTactical
@@ -100,9 +93,8 @@ modules:
       mg: primary
       rpg: primary
       melee: melee
-    gun-overrides:
-      "twx:twx_kw": melee
-      # ... 另外 7 把
+    gun-overrides: {}
+      # 例："tacz:some_knife": melee
     throwable-materials:
       - LRTACTICAL_THROWABLE
     melee-materials:

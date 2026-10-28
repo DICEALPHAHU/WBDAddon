@@ -80,11 +80,12 @@ import java.util.concurrent.ConcurrentHashMap;
  * 作为第三方插件，我们没有机会在扣钱前拦截，只能在同一个 tick 的
  * {@code MONITOR} 阶段读取“购买计数是否 +1”，再把旧武器卖掉/退款、把新武器归位。
  *
- * <h2>为什么近战要单独覆盖</h2>
+ * <h2>为什么近战要能单独覆盖</h2>
  *
- * <p>线上第 3 页那 8 把 Apex 刀是用 TACZ 的枪械框架做的，它们在 TACZ index
- * 里的 {@code type} 是 {@code sniper}。如果只看 type，它们会被当成主武器。
- * 所以 {@code gun-overrides} 里必须把这 8 个 GunId 显式标成 {@code melee}。
+ * <p>不少近战模组是用 TACZ 的枪械框架做的，它们在 TACZ index 里的
+ * {@code type} 往往不是 {@code melee}（常见是 {@code sniper}），只看 type
+ * 会被当成主武器。这类物品在 {@code item-categories.yml} 的 {@code guns} 里
+ * 显式标成 {@code melee} 即可。
  *
  * @author AlphaHu
  */
@@ -634,8 +635,6 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
         gunOverrides.clear();
         var section = plugin.getConfig().getConfigurationSection(base + "gun-overrides");
         if (section == null) {
-            // 配置里没有这一节时，仍然保证 8 把 Apex 刀不会被当成狙击枪。
-            putDefaultMeleeOverrides();
             return;
         }
         for (String key : section.getKeys(false)) {
@@ -646,14 +645,6 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
                 continue;
             }
             gunOverrides.put(key.toLowerCase(Locale.ROOT), category);
-        }
-    }
-
-    private void putDefaultMeleeOverrides() {
-        for (String id : List.of(
-                "twx:twx_kw", "twx:twx_nbejd", "twx:twx_hdd", "twx:twx_sc",
-                "twx:twx_nlj", "twx:twx_mqzz", "twx:twx_xsd", "twx:twx_mk")) {
-            gunOverrides.put(id, Category.MELEE);
         }
     }
 
