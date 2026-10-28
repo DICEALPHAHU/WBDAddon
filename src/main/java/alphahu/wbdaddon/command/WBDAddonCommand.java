@@ -18,7 +18,9 @@ import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
@@ -40,7 +42,8 @@ public class WBDAddonCommand implements CommandExecutor, TabCompleter {
     private final WBDAddon plugin;
 
     private static final List<String> SUB_COMMANDS =
-            Arrays.asList("help", "reload", "modules", "modes", "sound", "pause", "resume", "retag");
+            Arrays.asList("help", "reload", "modules", "modes", "sound", "pause", "resume",
+                    "retag", "shopscan");
 
     public WBDAddonCommand(WBDAddon plugin) {
         this.plugin = plugin;
@@ -121,6 +124,8 @@ public class WBDAddonCommand implements CommandExecutor, TabCompleter {
 
             case "retag" -> retag(sender, args);
 
+            case "shopscan" -> scanShop(sender);
+
             default -> sender.sendMessage(color("&c未知子命令。使用 /wbdaddon help 查看帮助。"));
         }
 
@@ -137,8 +142,95 @@ public class WBDAddonCommand implements CommandExecutor, TabCompleter {
         sender.sendMessage(color("&e/wbdaddon pause [竞技场] [秒数] &7- 技术暂停（管理员）"));
         sender.sendMessage(color("&e/wbdaddon resume [竞技场] &7- 恢复比赛（管理员）"));
         sender.sendMessage(color("&e/wbdaddon retag [玩家] &7- 重打装备分类标签"));
+        sender.sendMessage(color("&e/wbdaddon shopscan &7- 扫描商店商品并输出分类表片段"));
         sender.sendMessage(color("&e/pause &7- 玩家请求技术暂停（每队每场限次）"));
         sender.sendMessage(color("&6=========================="));
+    }
+
+    /**
+     * {@code /wbdaddon shopscan}：把 WBD 商店里的商品按当前规则分类，输出成
+     * 可以直接粘进 {@code item-categories.yml} 的片段。
+     *
+     * <p>只读，不改任何文件——服主看过之后再决定要不要写进对照表。
+     */
+    private void scanShop(CommandSender sender) {
+        if (!sender.hasPermission("wbdaddon.admin")) {
+            sender.sendMessage(color("&c你没有权限执行此命令。"));
+            return;
+        }
+        AddonModule module = plugin.getModuleManager().getModule("loadout-guard");
+        if (!(module instanceof LoadoutGuardModule loadout)
+                || !plugin.getModuleManager().isEnabled(module)) {
+            sender.sendMessage(color("&c装备槽守卫模块未启用。"));
+            return;
+        }
+        if (plugin.getWbd() == null || plugin.getWbd().getShopManager() == null) {
+            sender.sendMessage(color("&c找不到 WBD 商店。"));
+            return;
+        }
+
+        Map<String, String> guns = new LinkedHashMap<>();
+        Map<String, String> names = new LinkedHashMap<>();
+        int total = 0;
+
+        for (var shopItem : plugin.getWbd().getShopManager().getItems()) {
+            var give = shopItem.getGiveStack();
+            if (give == null || give.getType().isAir()) continue;
+            total++;
+            String category = loadout.categoryKey(give);
+            String gunId = null;
+            String type = "-";
+            if (plugin.isTacZAvailable() && plugin.getTacZApi() != null) {
+                try {
+                    gunId = plugin.getTacZApi().getItemGunId(give).orElse(null);
+                    if (gunId != null) {
+                        type = plugin.getTacZApi().getGun(gunId)
+                                .map(com.tacz.bridge.spigot.api.model.TacZGunSummary::type)
+                                .orElse("-");
+                    }
+                } catch (Throwable ignored) {
+                    // TacZ 异常时按无 GunId 处理
+                }
+            }
+
+            String line = shopItem.getId() + " | " + (gunId == null ? "-" : gunId)
+                    + " | " + type + " | " + category;
+            sender.sendMessage(color("&7" + line));
+            plugin.getLogger().info("[shopscan] " + line);
+
+            if (gunId != null) {
+                guns.putIfAbsent(gunId, category);
+            } else if (give.hasItemMeta() && give.getItemMeta().hasDisplayName()) {
+                // 只收真正有自定义显示名的物品；材质名当 key 没意义，还会污染 names 表
+                names.putIfAbsent(ChatColor.stripColor(give.getItemMeta().getDisplayName()),
+                        category);
+            }
+        }
+
+        sender.sendMessage(color("&6====== 可粘贴到 item-categories.yml ======"));
+        plugin.getLogger().info("[shopscan] ====== 可粘贴到 item-categories.yml 的片段 ======");
+        if (!guns.isEmpty()) {
+            sender.sendMessage(color("&eguns:"));
+            plugin.getLogger().info("[shopscan] guns:");
+            for (Map.Entry<String, String> e : guns.entrySet()) {
+                String yaml = "  \"" + e.getKey() + "\": " + e.getValue();
+                sender.sendMessage(color("&f" + yaml));
+                plugin.getLogger().info("[shopscan] " + yaml);
+            }
+        }
+        if (!names.isEmpty()) {
+            sender.sendMessage(color("&enames:"));
+            plugin.getLogger().info("[shopscan] names:");
+            for (Map.Entry<String, String> e : names.entrySet()) {
+                String yaml = "  \"" + e.getKey() + "\": " + e.getValue();
+                sender.sendMessage(color("&f" + yaml));
+                plugin.getLogger().info("[shopscan] " + yaml);
+            }
+        }
+        sender.sendMessage(color("&a扫描完成：&f" + total + " &a件商品，&f"
+                + guns.size() + " &a把枪、&f" + names.size() + " &a件非枪物品。"));
+        plugin.getLogger().info("[shopscan] 完成：" + total + " 件商品，"
+                + guns.size() + " 把枪，" + names.size() + " 件非枪物品。");
     }
 
     /**

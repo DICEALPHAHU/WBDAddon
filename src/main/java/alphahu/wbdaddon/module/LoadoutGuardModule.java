@@ -881,6 +881,11 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
      *
      * @return 清掉标签的物品数量
      */
+    /** 给外部（比如 /wbdaddon shopscan）用的分类查询，返回 primary/secondary/... 的小写名。 */
+    public String categoryKey(ItemStack stack) {
+        return classify(stack).key();
+    }
+
     public int retag(Player player) {
         PlayerInventory inventory = player.getInventory();
         int cleared = 0;

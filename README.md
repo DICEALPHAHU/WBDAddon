@@ -69,6 +69,7 @@ WarZBombDefuse 的第三方附加组件合集 —— 击杀报告 / 单人伤害
 - **拾取同类武器**：身上已经有一把时直接拦截，必须先丢掉现有那把才能捡新的
 - **分类对照表** `item-categories.yml`：`guns`（按 GunId）/ `names`（按显示名）/ `materials`（按材质）/ `types`（按 TacZ 类型）四张表，腐竹自己决定谁归哪类，自带注释；首次启动按现有 config 生成
 - **类别开关与落点**：同一张表的 `categories:` 段可以单独关掉某个类别（不锁格子 / 不限购 / 不拦截拾取），并指定它占哪个快捷栏格子
+- **`/wbdaddon shopscan`**：扫描 WBD 商店全部商品，打印 `商品 | GunId | type | 分类`，并给出可直接粘进对照表的片段
 - 分类来源：对照表 > 物品标签 > TacZ `type`；确保非 TacZ 物品也能归类
 - **分类结果写在物品上**（PDC `loadout: primary/secondary/melee/throwable/utility`）：认一次就固定，之后换 TacZ 版本、改 `gun-overrides` 都不会让已发出的武器忽然换类别；认错了用 `/wbdaddon retag` 洗掉重认
 - 近战模组的刀常常在 TACZ index 里被标成 `sniper`，在 `item-categories.yml` 的 `guns` 里覆盖成 `melee` 即可
