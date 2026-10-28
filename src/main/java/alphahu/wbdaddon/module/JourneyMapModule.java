@@ -44,6 +44,18 @@ public class JourneyMapModule implements AddonModule {
 
     @Override
     public void onEnable() {
+        // WarZHideName 也在用记分板队伍控制名字可见性：
+        // 一个玩家在同一块记分板上只能属于一个队伍，两边互相 addEntry 会把对方踢出队伍，
+        // 表现出来就是敌人名字偶尔闪一下。名字隐藏比小地图分组重要，默认让位。
+        boolean deferToHideName = plugin.getConfig()
+                .getBoolean("modules.journeymap-bridge.defer-to-hidename", true);
+        if (deferToHideName && Bukkit.getPluginManager().isPluginEnabled("WarZHideName")) {
+            this.synchronizer = null;
+            plugin.getLogger().info("检测到 WarZHideName，名字隐藏交给它处理，"
+                    + "JourneyMap 队伍同步已跳过（modules.journeymap-bridge.defer-to-hidename: false 可强制开启）。");
+            return;
+        }
+
         this.synchronizer = new TeamSynchronizer(plugin);
 
         // 同步间隔从配置读取，默认 20 tick = 1 秒
@@ -64,12 +76,11 @@ public class JourneyMapModule implements AddonModule {
             syncTask = null;
         }
 
-        // 清理本模块创建的所有原版队伍
+        // 清理本模块创建的所有原版队伍（没接管队伍时无需清理）
         if (synchronizer != null) {
             synchronizer.cleanupAllTeams();
             synchronizer = null;
+            plugin.getLogger().info("JourneyMap 桥接模块已卸载，队伍标签已清理。");
         }
-
-        plugin.getLogger().info("JourneyMap 桥接模块已卸载，队伍标签已清理。");
     }
 }
