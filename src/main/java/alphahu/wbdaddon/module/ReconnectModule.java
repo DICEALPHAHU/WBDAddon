@@ -97,7 +97,7 @@ public class ReconnectModule implements AddonModule, Listener {
     @Override
     public void onEnable() {
         this.holdMaxSeconds = plugin.getConfig()
-                .getInt("modules.reconnect.hold-max-seconds", 300);
+                .getInt("modules.reconnect.hold-max-seconds", 60);
         this.autoRejoin = plugin.getConfig()
                 .getBoolean("modules.reconnect.auto-rejoin", true);
         this.debug = plugin.getConfig().getBoolean("modules.reconnect.debug", false);
