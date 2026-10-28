@@ -496,6 +496,10 @@ modules:
       melee: 1
       throwable: 4
 
+    # 刀不要钱：买刀（同类近战）时直接把手里的那把换掉，
+    # 不做「同款拦截」，也不退旧刀的钱，省得背包里堆一堆旧刀。
+    melee-always-swap: true
+
     # 购买“同类、同一把枪”时怎么处理：
     #   block             = 取消本次购买并退还本次购买的钱（推荐，防止免费补弹）
     #   replace-no-refund = 用新枪替换旧枪，不退旧枪的钱（相当于付费换新）
@@ -582,6 +586,7 @@ modules:
       replaced-no-refund: "&a已替换 %old% &7→ &a%new%&7（旧武器无商店售价）"
       same-gun-blocked: "&c你已装备 %gun%&c，本次购买已取消并退还 &e$%price%"
       same-gun-blocked-free: "&c你已装备 %gun%&c，本次购买已取消。"
+      melee-swapped: "&a已换上 &f%new%&7。"
       purchase-missing: "&c背包放不下，购买的物品没有给到你，已退还 &e$%price%"
       purchase-missing-free: "&c背包放不下，这次购买的物品没有给到你。"
       slot-restored: "&7购买覆盖了那一格，已把 &f%item% &7放回背包。"

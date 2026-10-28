@@ -141,6 +141,8 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
     private int throwableLimit = 4;
 
     private boolean refundOldWeapon = true;
+    /** 刀不要钱：买刀时直接换掉手里那把，不做同款拦截、也不退旧刀。 */
+    private boolean meleeAlwaysSwap = true;
     private boolean dropDuplicates = true;
     private boolean purchaseSafety = true;
     private boolean protectOpenItem = true;
@@ -300,6 +302,7 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
         }
 
         this.refundOldWeapon = plugin.getConfig().getBoolean(base + "refund-old-weapon", true);
+        this.meleeAlwaysSwap = plugin.getConfig().getBoolean(base + "melee-always-swap", true);
         this.dropDuplicates = plugin.getConfig().getBoolean(base + "drop-duplicates", true);
         this.purchaseSafety = plugin.getConfig().getBoolean(base + "purchase-safety", true);
         this.protectOpenItem = plugin.getConfig().getBoolean(base + "protect-open-item", true);
@@ -1228,7 +1231,8 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
         }
 
         boolean same = sameItem(oldItem.item, newItem.item);
-        if (same && sameGunPolicy == SameGunPolicy.BLOCK) {
+        boolean meleeSwap = category == Category.MELEE && meleeAlwaysSwap;
+        if (same && sameGunPolicy == SameGunPolicy.BLOCK && !meleeSwap) {
             setItemAt(inventory, newItem.slot, null);
             if (price > 0) {
                 refund(session, player, price);
@@ -1242,6 +1246,20 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
             if (debug) {
                 plugin.getLogger().info("[loadout] " + player.getName()
                         + " 重复购买 " + itemName(newItem.item) + "，已取消并退款。");
+            }
+            return;
+        }
+
+        if (meleeSwap) {
+            // 刀不要钱，也别留一把旧的占地方：直接把手里的那把换掉
+            String oldName = itemName(oldItem.item);
+            String newName = itemName(newItem.item);
+            setItemAt(inventory, oldItem.slot, null);
+            moveItem(player, newItem.item, newItem.slot, targetSlot);
+            msg(player, "melee-swapped", Map.of("old", oldName, "new", newName));
+            if (debug) {
+                plugin.getLogger().info("[loadout] " + player.getName() + " 换刀 "
+                        + oldName + " -> " + newName + "（直接替换）");
             }
             return;
         }
