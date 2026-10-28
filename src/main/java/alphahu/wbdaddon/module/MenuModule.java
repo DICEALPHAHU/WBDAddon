@@ -3,6 +3,7 @@ package alphahu.wbdaddon.module;
 import alphahu.wbdaddon.WBDAddon;
 import alphahu.wbdaddon.api.AddonMode;
 import alphahu.wbdaddon.mode.BombDefuseMode;
+import alphahu.wbdaddon.storage.StatsStore;
 import com.warz.bombdefuse.api.WbdMatchEndEvent;
 import com.warz.bombdefuse.api.WbdPlayerLeaveArenaEvent;
 import com.warz.bombdefuse.api.WbdRoundStartEvent;
@@ -84,8 +85,9 @@ public class MenuModule implements AddonModule, Listener {
     /** 当前这场比赛已经计入过的玩家，避免离场和比赛结束重复累加。 */
     private final Map<String, Set<UUID>> counted = new ConcurrentHashMap<>();
 
-    /** 生涯数据 + 比赛历史 + 最近结果，统一放在 data/stats.yml。 */
+    /** 生涯数据 + 比赛历史 + 最近结果：优先 SQLite，驱动缺失时退回 data/stats.yml。 */
     private File storageFile;
+    private StatsStore store;
 
     public MenuModule(WBDAddon plugin) {
         this.plugin = plugin;
@@ -111,10 +113,22 @@ public class MenuModule implements AddonModule, Listener {
         this.storageFile = plugin.dataFile("stats.yml");
         this.historySize = Math.max(1,
                 plugin.getConfig().getInt("modules.menu.history-size", 30));
+
+        // 数据库优先：服务端 libraries 里自带 sqlite-jdbc 时用它，否则退回 YAML
+        this.store = new StatsStore(plugin.getLogger());
+        if (!store.open(new File(plugin.getDataDir(), "stats.db"))) {
+            this.store = null;
+        }
         this.keybind = !"off".equalsIgnoreCase(
                 plugin.getConfig().getString("modules.menu.open-key", "sneak-swap-hands"));
         migrateLegacyFiles();
-        loadStorage();
+        if (store != null && !store.isEmpty()) {
+            loadFromStore();
+        } else {
+            // 库里还没数据：先把 YAML（或旧版文件）读进来，再灌进库
+            loadStorage();
+            saveStore();
+        }
 
         Bukkit.getPluginManager().registerEvents(this, plugin);
         plugin.getLogger().info("主菜单已启动：/wbda 或 "
@@ -132,6 +146,10 @@ public class MenuModule implements AddonModule, Listener {
             }
         }
         saveStorage();
+        if (store != null) {
+            store.close();
+            store = null;
+        }
         lastResults.clear();
         stats.clear();
         counted.clear();
@@ -862,6 +880,14 @@ public class MenuModule implements AddonModule, Listener {
         YamlConfiguration yaml = YamlConfiguration.loadConfiguration(storageFile);
         readResults(yaml);
         readStats(yaml);
+        trimHistory();
+    }
+
+    /** 历史只保留最近 history-size 场，读盘时也要裁一次（旧版本可能存多了）。 */
+    private void trimHistory() {
+        while (history.size() > historySize) {
+            history.remove(history.size() - 1);
+        }
     }
 
     /**
@@ -880,6 +906,7 @@ public class MenuModule implements AddonModule, Listener {
         if (legacyStats.isFile()) {
             readStats(YamlConfiguration.loadConfiguration(legacyStats));
         }
+        trimHistory();
         saveStorage();
         backupLegacy(legacyResults);
         backupLegacy(legacyStats);
@@ -935,8 +962,14 @@ public class MenuModule implements AddonModule, Listener {
         return o instanceof Number n ? n.longValue() : 0L;
     }
 
-    /** 把比赛结果 / 历史 / 生涯一起写回 data/stats.yml。 */
+    /** 落盘：YAML 作为可读备份，有数据库时同时写库。 */
     private void saveStorage() {
+        saveYaml();
+        saveStore();
+    }
+
+    /** 把比赛结果 / 历史 / 生涯一起写回 data/stats.yml。 */
+    private void saveYaml() {
         if (storageFile == null) return;
         // 防御：内存里什么都没有、磁盘上却有内容时，绝不覆盖。
         // 之前 /wbdaddon reload 在半路抛错，模块被卸载了两次，
@@ -1021,6 +1054,74 @@ public class MenuModule implements AddonModule, Listener {
             yaml.set(base + ".matches", s.matches);
             yaml.set(base + ".wins", s.wins);
         }
+    }
+
+    // ------------------------------------------------------------------
+    // SQLite
+    // ------------------------------------------------------------------
+
+    /** 从库里读出比赛结果 / 历史 / 生涯。 */
+    private void loadFromStore() {
+        lastResults.clear();
+        history.clear();
+        stats.clear();
+
+        for (StatsStore.ResultRow row : store.loadResults()) {
+            lastResults.put(row.arena(), new LastResult(row.winner(), row.tScore(), row.ctScore()));
+        }
+        for (StatsStore.MatchRow match : store.loadHistory(historySize)) {
+            java.util.List<Line> lines = new java.util.ArrayList<>();
+            for (StatsStore.PlayerLine line : match.lines()) {
+                lines.add(new Line(line.name(), line.team(), line.kills(), line.deaths(),
+                        line.plants(), line.defuses()));
+            }
+            history.add(new MatchRecord(match.arena(), match.winner(), match.tScore(),
+                    match.ctScore(), match.playedAt(), lines));
+        }
+        trimHistory();
+        for (StatsStore.CareerRow row : store.loadCareer()) {
+            Stats entry = new Stats();
+            entry.name = row.name();
+            entry.kills = row.kills();
+            entry.deaths = row.deaths();
+            entry.plants = row.plants();
+            entry.defuses = row.defuses();
+            entry.matches = row.matches();
+            entry.wins = row.wins();
+            stats.put(row.uuid(), entry);
+        }
+    }
+
+    /** 把内存里的数据整体写进库（一场比赛结束才写，量很小）。 */
+    private void saveStore() {
+        if (store == null || !store.isAvailable()) return;
+
+        java.util.List<StatsStore.ResultRow> results = new java.util.ArrayList<>();
+        for (Map.Entry<String, LastResult> entry : lastResults.entrySet()) {
+            LastResult value = entry.getValue();
+            results.add(new StatsStore.ResultRow(entry.getKey(), value.winner(),
+                    value.tScore(), value.ctScore()));
+        }
+
+        java.util.List<StatsStore.MatchRow> matches = new java.util.ArrayList<>();
+        for (MatchRecord record : history) {
+            StatsStore.MatchRow row = new StatsStore.MatchRow(0L, record.arenaId(),
+                    record.winner(), record.tScore(), record.ctScore(), record.time());
+            for (Line line : record.players()) {
+                row.lines().add(new StatsStore.PlayerLine(line.name(), line.team(),
+                        line.kills(), line.deaths(), line.plants(), line.defuses()));
+            }
+            matches.add(row);
+        }
+
+        java.util.List<StatsStore.CareerRow> career = new java.util.ArrayList<>();
+        for (Map.Entry<UUID, Stats> entry : stats.entrySet()) {
+            Stats value = entry.getValue();
+            career.add(new StatsStore.CareerRow(entry.getKey(), value.name, value.kills,
+                    value.deaths, value.plants, value.defuses, value.matches, value.wins));
+        }
+
+        store.replaceAll(results, matches, career);
     }
 
     /** 文件里是否已经有内容（有内容就不该被空内存覆盖）。 */
