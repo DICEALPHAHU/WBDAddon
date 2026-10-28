@@ -48,6 +48,10 @@ public class ModuleManager {
             if (enabled) {
                 try {
                     module.onEnable();
+                    if (!module.isAvailable()) {
+                        plugin.getLogger().warning("模块未就绪，已跳过：" + module.getDisplayName());
+                        continue;
+                    }
                     enabledModules.add(module);
                     plugin.getLogger().info("已启用模块：" + module.getDisplayName());
                 } catch (Exception e) {

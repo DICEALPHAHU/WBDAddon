@@ -284,6 +284,18 @@ public class TechnicalPauseModule implements AddonModule, Listener {
         return pauses.containsKey(arenaId);
     }
 
+    /**
+     * 外部（例如 {@code /unpause} 投票通过）请求提前恢复。
+     *
+     * <p>与管理员 {@code /wbdaddon resume} 的区别：这里只管把正在进行的暂停收掉，
+     * 不去动「已预约、等下一回合生效」的那份暂停。
+     *
+     * @return 确实恢复了一场暂停返回 true；本来就没在暂停返回 false
+     */
+    public boolean forceResume(String arenaId, String reason) {
+        return resume(arenaId, reason);
+    }
+
     // ------------------------------------------------------------------
     // 暂停 / 恢复
     // ------------------------------------------------------------------

@@ -1,0 +1,1460 @@
+package alphahu.wbdaddon.module;
+
+import alphahu.wbdaddon.WBDAddon;
+import alphahu.wbdaddon.util.ShopPriceCache;
+import alphahu.wbdaddon.util.WeaponNames;
+import com.tacz.bridge.spigot.api.TacZSpigotApi;
+import com.tacz.bridge.spigot.api.model.TacZGunSummary;
+import com.warz.bombdefuse.WarZBombDefusePlugin;
+import com.warz.bombdefuse.api.WbdMoneyChangeEvent;
+import com.warz.bombdefuse.api.WbdPlayerJoinArenaEvent;
+import com.warz.bombdefuse.api.WbdRoundStartEvent;
+import com.warz.bombdefuse.arena.ArenaSession;
+import com.warz.bombdefuse.arena.PlayerRecord;
+import com.warz.bombdefuse.model.Team;
+import com.warz.bombdefuse.shop.ShopItem;
+import com.warz.bombdefuse.shop.ShopManager;
+import com.warz.bombdefuse.util.ItemUtil;
+import org.bukkit.Bukkit;
+import org.bukkit.ChatColor;
+import org.bukkit.Location;
+import org.bukkit.Material;
+import org.bukkit.entity.Item;
+import org.bukkit.entity.Player;
+import org.bukkit.event.EventHandler;
+import org.bukkit.event.EventPriority;
+import org.bukkit.event.HandlerList;
+import org.bukkit.event.Listener;
+import org.bukkit.event.entity.EntityPickupItemEvent;
+import org.bukkit.event.inventory.InventoryClickEvent;
+import org.bukkit.event.inventory.InventoryCloseEvent;
+import org.bukkit.event.inventory.InventoryDragEvent;
+import org.bukkit.event.inventory.InventoryOpenEvent;
+import org.bukkit.event.player.PlayerDropItemEvent;
+import org.bukkit.event.player.PlayerQuitEvent;
+import org.bukkit.event.player.PlayerRespawnEvent;
+import org.bukkit.event.player.PlayerSwapHandItemsEvent;
+import org.bukkit.inventory.ItemStack;
+import org.bukkit.inventory.PlayerInventory;
+import org.bukkit.scheduler.BukkitTask;
+
+import java.io.File;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+
+/**
+ * 装备槽守卫：主武器 / 副武器 / 近战 / 投掷物的分类、限购、槽位锁定与替换退款。
+ *
+ * <h2>规则</h2>
+ *
+ * <ul>
+ *   <li>主武器最多 1 把，固定快捷栏第 1 格；</li>
+ *   <li>副武器（手枪）最多 1 把，固定第 2 格；</li>
+ *   <li>近战武器最多 1 把，固定第 3 格；</li>
+ *   <li>投掷物最多 4 颗，第 4 格放一堆，其余放背包；</li>
+ *   <li>购买同类已满时，替换旧武器并退还旧武器的商店售价；</li>
+ *   <li>拾取同类武器时，如果身上已经有一把，直接拦截——必须先丢掉旧的才能捡新的。</li>
+ * </ul>
+ *
+ * <h2>为什么购买要“事后处理”</h2>
+ *
+ * <p>WBD 的商店点击在 {@code GameListener.onInventoryClick} 的 {@code LOWEST}
+ * 阶段就已经完成扣钱和发物品，而且它<b>不检查事件是否已被取消</b>。
+ * 作为第三方插件，我们没有机会在扣钱前拦截，只能在同一个 tick 的
+ * {@code MONITOR} 阶段读取“购买计数是否 +1”，再把旧武器卖掉/退款、把新武器归位。
+ *
+ * <h2>为什么近战要单独覆盖</h2>
+ *
+ * <p>线上第 3 页那 8 把 Apex 刀是用 TACZ 的枪械框架做的，它们在 TACZ index
+ * 里的 {@code type} 是 {@code sniper}。如果只看 type，它们会被当成主武器。
+ * 所以 {@code gun-overrides} 里必须把这 8 个 GunId 显式标成 {@code melee}。
+ *
+ * @author AlphaHu
+ */
+public final class LoadoutGuardModule implements AddonModule, Listener {
+
+    /** 允许绕过本模块的权限。 */
+    public static final String BYPASS_PERMISSION = "wbdaddon.loadout.bypass";
+
+    /** 玩家背包主存储区槽位数（0-35）。 */
+    private static final int STORAGE_SIZE = 36;
+
+    /** Bukkit PlayerInventory 的副手槽位。 */
+    private static final int OFFHAND_SLOT = 40;
+
+    /** 商店展示物品 PDC 标记前缀，WBD 的 findShopItem 也按这个前缀解析。 */
+    private static final String SHOP_MARKER_PREFIX = "shop:";
+
+    private final WBDAddon plugin;
+
+    /** 每个玩家每件商品本回合已购买次数，用来判断这次点击是否真的买成功了。 */
+    private final Map<UUID, Map<String, Integer>> purchaseCounts = new ConcurrentHashMap<>();
+
+    /** 最近一次扣钱记录，用来确认这次点击真的扣了钱（被 WBD 拒绝的点击不会扣钱）。 */
+    private final Map<UUID, Spend> lastSpend = new ConcurrentHashMap<>();
+
+    /** 同一个 tick 内多个事件只安排一次归位。 */
+    private final Set<UUID> scheduledNormalize = ConcurrentHashMap.newKeySet();
+
+    /** 提示冷却，避免玩家踩在掉落物上刷屏。 */
+    private final Map<String, Long> messageCooldown = new ConcurrentHashMap<>();
+
+    /** 已经提示过的 GunId，避免未知枪械刷控制台。 */
+    private final Set<String> warnedGuns = ConcurrentHashMap.newKeySet();
+
+    /** GunId -> 类别缓存。 */
+    private final Map<String, Category> gunCategoryCache = new ConcurrentHashMap<>();
+
+    private ShopPriceCache shopPrices;
+    private File shopFile;
+    private long shopFileModified = -1L;
+
+    private int primarySlot = 0;
+    private int secondarySlot = 1;
+    private int meleeSlot = 2;
+    private int throwableSlot = 3;
+
+    private int primaryLimit = 1;
+    private int secondaryLimit = 1;
+    private int meleeLimit = 1;
+    private int throwableLimit = 4;
+
+    private boolean refundOldWeapon = true;
+    private boolean dropDuplicates = true;
+    private boolean debug = false;
+    private SameGunPolicy sameGunPolicy = SameGunPolicy.BLOCK;
+    private long lockIntervalTicks = 10L;
+
+    private BukkitTask lockTask;
+    private volatile boolean active;
+
+    private final Map<String, Category> typeCategories = new HashMap<>();
+    private final Map<String, Category> gunOverrides = new HashMap<>();
+    private final Set<Material> throwableMaterials = new HashSet<>();
+    private final Set<Material> meleeMaterials = new HashSet<>();
+    private final Set<Material> utilityMaterials = new HashSet<>();
+    private String taczGunMaterialName = "TACZ_MODERN_KINETIC_GUN";
+
+    public LoadoutGuardModule(WBDAddon plugin) {
+        this.plugin = plugin;
+    }
+
+    // ------------------------------------------------------------------
+    // 生命周期
+    // ------------------------------------------------------------------
+
+    @Override
+    public String getId() {
+        return "loadout-guard";
+    }
+
+    @Override
+    public String getDisplayName() {
+        return "装备槽守卫";
+    }
+
+    @Override
+    public boolean isEnabledByDefault() {
+        return true;
+    }
+
+    @Override
+    public boolean isAvailable() {
+        return active;
+    }
+
+    @Override
+    public void onEnable() {
+        purchaseCounts.clear();
+        lastSpend.clear();
+        scheduledNormalize.clear();
+        messageCooldown.clear();
+        warnedGuns.clear();
+        gunCategoryCache.clear();
+
+        loadConfig();
+        this.active = true;
+
+        // 本模块的类直接引用 TacZSpigotApi；缺桥接时 Bukkit 会拒绝注册事件，
+        // 与其在控制台刷一条 Failed to register events，不如在这里明确跳过。
+        if (plugin.getTacZApi() == null) {
+            plugin.getLogger().warning("装备槽守卫：TacZSpigotBridge 不可用，"
+                    + "本模块需要桥接 API 才能注册事件，已跳过。");
+            this.active = false;
+            return;
+        }
+
+        this.shopFile = new File(plugin.getWbd().getDataFolder(), "shop.yml");
+        this.shopPrices = new ShopPriceCache();
+        // onEnable 会复用同一个模块实例（/wbdaddon reload），
+        // 必须把 mtime 清掉，否则新缓存会因为“文件没变”而跳过加载。
+        this.shopFileModified = -1L;
+        reloadPricesIfChanged();
+
+        Bukkit.getPluginManager().registerEvents(this, plugin);
+
+        long interval = Math.max(1L, lockIntervalTicks);
+        this.lockTask = Bukkit.getScheduler().runTaskTimer(
+                plugin, this::tickAll, 20L, interval);
+
+        warnSlotConflicts();
+        // /wbdaddon reload 或插件中途装入时，商店可能正开着；先把在场玩家的
+        // 购买计数快照下来，避免第一次点击被当成“缓存缺失”而误判。
+        try {
+            snapshotAllArenaCounts();
+        } catch (Throwable t) {
+            plugin.getLogger().warning("装备槽守卫：初始化购买计数快照失败，"
+                    + "首次购买可能被跳过：" + t);
+        }
+        plugin.getLogger().info("装备槽守卫已启动：主武器→第 " + (primarySlot + 1)
+                + " 格，副武器→第 " + (secondarySlot + 1)
+                + " 格，近战→第 " + (meleeSlot + 1)
+                + " 格，投掷物→第 " + (throwableSlot + 1)
+                + " 格（上限 " + (throwableLimit <= 0 ? "不限" : throwableLimit + " 颗") + "）。");
+        if (plugin.getTacZApi() == null) {
+            plugin.getLogger().warning("装备槽守卫：TacZSpigotBridge 不可用，"
+                    + "TACZ 枪械将无法分类（手枪/步枪都不会被限购）。");
+        } else if (shopPrices != null && shopPrices.gunCount() == 0) {
+            plugin.getLogger().warning("装备槽守卫：没有从 shop.yml 读到任何枪械价格，"
+                    + "替换旧武器时将无法退款。");
+        }
+    }
+
+    @Override
+    public void onDisable() {
+        this.active = false;
+        if (lockTask != null) {
+            lockTask.cancel();
+            lockTask = null;
+        }
+        HandlerList.unregisterAll(this);
+        purchaseCounts.clear();
+        lastSpend.clear();
+        scheduledNormalize.clear();
+        messageCooldown.clear();
+        gunCategoryCache.clear();
+        plugin.getLogger().info("装备槽守卫已卸载。");
+    }
+
+    // ------------------------------------------------------------------
+    // 配置
+    // ------------------------------------------------------------------
+
+    private void loadConfig() {
+        String base = "modules.loadout-guard.";
+
+        this.primarySlot = plugin.getConfig().getInt(base + "slots.primary", 0);
+        this.secondarySlot = plugin.getConfig().getInt(base + "slots.secondary", 1);
+        this.meleeSlot = plugin.getConfig().getInt(base + "slots.melee", 2);
+        this.throwableSlot = plugin.getConfig().getInt(base + "slots.throwable", 3);
+        if (!validSlots()) {
+            plugin.getLogger().warning("装备槽守卫：slots 配置不是 4 个互不相同的 0-8 槽位，"
+                    + "已回退到 1/2/3/4 号格。");
+            this.primarySlot = 0;
+            this.secondarySlot = 1;
+            this.meleeSlot = 2;
+            this.throwableSlot = 3;
+        }
+
+        this.primaryLimit = Math.max(0, plugin.getConfig().getInt(base + "limits.primary", 1));
+        this.secondaryLimit = Math.max(0, plugin.getConfig().getInt(base + "limits.secondary", 1));
+        this.meleeLimit = Math.max(0, plugin.getConfig().getInt(base + "limits.melee", 1));
+        this.throwableLimit = Math.max(0, plugin.getConfig().getInt(base + "limits.throwable", 4));
+        if (primaryLimit != 1 || secondaryLimit != 1 || meleeLimit != 1) {
+            plugin.getLogger().warning("装备槽守卫：主武器 / 副武器 / 近战固定各 1 把，"
+                    + "limits.primary/secondary/melee 只用于展示，不会放宽限制。");
+        }
+
+        this.refundOldWeapon = plugin.getConfig().getBoolean(base + "refund-old-weapon", true);
+        this.dropDuplicates = plugin.getConfig().getBoolean(base + "drop-duplicates", true);
+        this.debug = plugin.getConfig().getBoolean(base + "debug", false);
+        this.lockIntervalTicks = Math.max(1L,
+                plugin.getConfig().getLong(base + "lock-interval-ticks", 10L));
+        this.sameGunPolicy = SameGunPolicy.parse(
+                plugin.getConfig().getString(base + "same-gun-policy", "block"));
+
+        this.taczGunMaterialName = plugin.getConfig().getString(
+                base + "tacz-gun-material", "TACZ_MODERN_KINETIC_GUN");
+
+        loadTypeCategories(base);
+        loadGunOverrides(base);
+        loadMaterials(base);
+    }
+
+    private boolean validSlots() {
+        int[] slots = {primarySlot, secondarySlot, meleeSlot, throwableSlot};
+        Set<Integer> seen = new HashSet<>();
+        for (int slot : slots) {
+            if (slot < 0 || slot > 8) return false;
+            if (!seen.add(slot)) return false;
+        }
+        return true;
+    }
+
+    private void loadTypeCategories(String base) {
+        typeCategories.clear();
+        // 先铺一层默认值，再让配置覆盖/追加。
+        typeCategories.put("pistol", Category.SECONDARY);
+        typeCategories.put("rifle", Category.PRIMARY);
+        typeCategories.put("smg", Category.PRIMARY);
+        typeCategories.put("shotgun", Category.PRIMARY);
+        typeCategories.put("sniper", Category.PRIMARY);
+        typeCategories.put("mg", Category.PRIMARY);
+        typeCategories.put("rpg", Category.PRIMARY);
+        typeCategories.put("melee", Category.MELEE);
+
+        var section = plugin.getConfig()
+                .getConfigurationSection(base + "tacz-type-categories");
+        if (section == null) return;
+        for (String key : section.getKeys(false)) {
+            Category category = Category.parse(section.getString(key));
+            if (category == null) {
+                plugin.getLogger().warning("装备槽守卫：tacz-type-categories." + key
+                        + " 的类别无效，已忽略。");
+                continue;
+            }
+            typeCategories.put(key.toLowerCase(Locale.ROOT), category);
+        }
+    }
+
+    private void loadGunOverrides(String base) {
+        gunOverrides.clear();
+        var section = plugin.getConfig().getConfigurationSection(base + "gun-overrides");
+        if (section == null) {
+            // 配置里没有这一节时，仍然保证 8 把 Apex 刀不会被当成狙击枪。
+            putDefaultMeleeOverrides();
+            return;
+        }
+        for (String key : section.getKeys(false)) {
+            Category category = Category.parse(section.getString(key));
+            if (category == null) {
+                plugin.getLogger().warning("装备槽守卫：gun-overrides." + key
+                        + " 的类别无效，已忽略。");
+                continue;
+            }
+            gunOverrides.put(key.toLowerCase(Locale.ROOT), category);
+        }
+    }
+
+    private void putDefaultMeleeOverrides() {
+        for (String id : List.of(
+                "twx:twx_kw", "twx:twx_nbejd", "twx:twx_hdd", "twx:twx_sc",
+                "twx:twx_nlj", "twx:twx_mqzz", "twx:twx_xsd", "twx:twx_mk")) {
+            gunOverrides.put(id, Category.MELEE);
+        }
+    }
+
+    private void loadMaterials(String base) {
+        throwableMaterials.clear();
+        meleeMaterials.clear();
+        utilityMaterials.clear();
+
+        readMaterials(base + "throwable-materials",
+                List.of("LRTACTICAL_THROWABLE"), throwableMaterials);
+        readMaterials(base + "melee-materials",
+                List.of("LRTACTICAL_MELEE"), meleeMaterials);
+        readMaterials(base + "utility-materials",
+                List.of("LRTACTICAL_CONSUMABLE", "TACZ_ATTACHMENT", "TACZ_AMMO",
+                        "SHEARS", "POTION"), utilityMaterials);
+    }
+
+    private void readMaterials(String path, List<String> defaults, Set<Material> target) {
+        List<String> names = plugin.getConfig().getStringList(path);
+        if (names.isEmpty()) names = defaults;
+        for (String raw : names) {
+            if (raw == null || raw.isBlank()) continue;
+            Material material = Material.matchMaterial(raw.trim().toUpperCase(Locale.ROOT));
+            if (material == null) {
+                if (debug) {
+                    plugin.getLogger().warning("装备槽守卫：" + path + " 里的材质 "
+                            + raw + " 在当前服务端不存在，已忽略。");
+                }
+                continue;
+            }
+            target.add(material);
+        }
+    }
+
+    private void warnSlotConflicts() {
+        try {
+            var settings = plugin.getWbd().getConfigManager().getSettings();
+            if (settings != null && settings.c4Slot >= 0
+                    && isConfiguredSlot(settings.c4Slot)) {
+                plugin.getLogger().warning("装备槽守卫：配置的装备槽位与 WBD 的 c4-slot="
+                        + settings.c4Slot + " 冲突，请把 c4-slot 改成别的槽位。");
+            }
+        } catch (Throwable ignored) {
+            // WBD 版本差异，不影响主功能
+        }
+        try {
+            int openSlot = plugin.getWbd().getShopManager().getOpenItemSlot();
+            if (isConfiguredSlot(openSlot)) {
+                plugin.getLogger().warning("装备槽守卫：配置的装备槽位与 WBD 商店开启物品槽位="
+                        + openSlot + " 冲突，请调整 shop.open-item.slot。");
+            }
+        } catch (Throwable ignored) {
+            // 同上
+        }
+        try {
+            for (ShopItem item : plugin.getWbd().getShopManager().getItems()) {
+                if (!"defuse_kit".equals(item.getId())) continue;
+                int slot = item.getGiveSlot();
+                if (isConfiguredSlot(slot)) {
+                    plugin.getLogger().warning("装备槽守卫：拆弹器的 give-slot="
+                            + slot + " 与装备槽位冲突。");
+                }
+            }
+        } catch (Throwable ignored) {
+            // 同上
+        }
+        try {
+            for (ShopItem item : plugin.getWbd().getShopManager().getItems()) {
+                ItemStack give = item.getGiveStack();
+                if (give == null || give.getType().isAir()) continue;
+                Category category = classify(give);
+                int categorySlot = slotOf(category);
+                if (categorySlot >= 0 && item.getGiveSlot() == categorySlot) {
+                    plugin.getLogger().warning("装备槽守卫：商品 " + item.getId()
+                            + " 的 give-slot=" + categorySlot
+                            + " 与它的装备槽相同。WBD 会直接覆盖旧武器，"
+                            + "替换退款可能失效；建议把该商品改成 give-slot: -1。");
+                }
+            }
+        } catch (Throwable ignored) {
+            // 同上
+        }
+    }
+
+    private boolean isConfiguredSlot(int slot) {
+        return slot == primarySlot || slot == secondarySlot
+                || slot == meleeSlot || slot == throwableSlot;
+    }
+
+    // ------------------------------------------------------------------
+    // 分类
+    // ------------------------------------------------------------------
+
+    private Category classify(ItemStack item) {
+        if (item == null || item.getType().isAir()) return Category.NONE;
+
+        WarZBombDefusePlugin wbd = plugin.getWbd();
+        if (wbd != null) {
+            String marker = ItemUtil.getMarker(item, wbd);
+            if ("c4".equals(marker) || "defuse_kit".equals(marker)) {
+                return Category.UTILITY;
+            }
+        }
+
+        Material type = item.getType();
+        if (meleeMaterials.contains(type)) return Category.MELEE;
+        if (throwableMaterials.contains(type)) return Category.THROWABLE;
+        if (utilityMaterials.contains(type)) return Category.UTILITY;
+
+        if (!type.name().equals(taczGunMaterialName)) {
+            return Category.NONE;
+        }
+
+        TacZSpigotApi api = plugin.getTacZApi();
+        if (api == null) {
+            warnOnce("no-tacz-api");
+            return Category.NONE;
+        }
+
+        String gunId;
+        try {
+            gunId = api.getItemGunId(item).orElse(null);
+        } catch (Throwable t) {
+            warnOnce("no-tacz-api");
+            return Category.NONE;
+        }
+        if (gunId == null) return Category.NONE;
+
+        Category cached = gunCategoryCache.get(gunId);
+        if (cached != null) return cached;
+
+        Category resolved = resolveGunCategory(api, gunId);
+        gunCategoryCache.put(gunId, resolved);
+        return resolved;
+    }
+
+    private Category resolveGunCategory(TacZSpigotApi api, String gunId) {
+        Category override = gunOverrides.get(gunId.toLowerCase(Locale.ROOT));
+        if (override != null) return override;
+
+        String type;
+        try {
+            type = api.getGun(gunId).map(TacZGunSummary::type).orElse(null);
+        } catch (Throwable t) {
+            warnOnce("gun:" + gunId);
+            return Category.PRIMARY;
+        }
+        if (type != null) {
+            Category mapped = typeCategories.get(type.toLowerCase(Locale.ROOT));
+            if (mapped != null) return mapped;
+        }
+
+        warnOnce("gun:" + gunId);
+        return Category.PRIMARY;
+    }
+
+    private String gunId(ItemStack item) {
+        if (item == null || item.getType().isAir()) return null;
+        if (!item.getType().name().equals(taczGunMaterialName)) return null;
+        TacZSpigotApi api = plugin.getTacZApi();
+        if (api == null) return null;
+        try {
+            return api.getItemGunId(item).orElse(null);
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    private boolean sameItem(ItemStack a, ItemStack b) {
+        if (a == null || b == null) return false;
+        String idA = gunId(a);
+        String idB = gunId(b);
+        if (idA != null || idB != null) {
+            return idA != null && idA.equals(idB);
+        }
+        if (a.getType() != b.getType()) return false;
+        String nameA = displayName(a);
+        String nameB = displayName(b);
+        if (!nameA.isEmpty() && !nameB.isEmpty()) return nameA.equals(nameB);
+        return true;
+    }
+
+    private boolean sameThrowableType(ItemStack a, ItemStack b) {
+        if (a == null || b == null) return false;
+        if (a.getType() != b.getType()) return false;
+        String nameA = displayName(a);
+        String nameB = displayName(b);
+        if (!nameA.isEmpty() && !nameB.isEmpty()) return nameA.equals(nameB);
+        return true;
+    }
+
+    private String displayName(ItemStack item) {
+        if (item == null || !item.hasItemMeta()) return "";
+        var meta = item.getItemMeta();
+        if (meta == null || !meta.hasDisplayName()) return "";
+        return ChatColor.stripColor(meta.getDisplayName());
+    }
+
+    private String itemName(ItemStack item) {
+        if (item == null || item.getType().isAir()) return "未知物品";
+        String display = displayName(item);
+        if (!display.isEmpty()) return display;
+        String id = gunId(item);
+        if (id != null) return WeaponNames.humanizeGunId(id);
+        return item.getType().name().toLowerCase(Locale.ROOT).replace('_', ' ');
+    }
+
+    private void warnOnce(String key) {
+        if (!warnedGuns.add(key)) return;
+        if (key.startsWith("gun:")) {
+            plugin.getLogger().warning("装备槽守卫：枪械 " + key.substring(4)
+                    + " 不在 gun-overrides 里，且 TACZ type 也没有映射，"
+                    + "已按主武器处理。请确认它是不是近战/特殊武器。");
+        } else {
+            plugin.getLogger().warning("装备槽守卫：无法读取 TACZ 枪械类型，"
+                    + "请检查 TacZSpigotBridge 是否正常加载。");
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // 槽位查找
+    // ------------------------------------------------------------------
+
+    private int slotOf(Category category) {
+        return switch (category) {
+            case PRIMARY -> primarySlot;
+            case SECONDARY -> secondarySlot;
+            case MELEE -> meleeSlot;
+            case THROWABLE -> throwableSlot;
+            default -> -1;
+        };
+    }
+
+    private List<SlotItem> find(Player player, Category category) {
+        List<SlotItem> result = new ArrayList<>();
+        PlayerInventory inventory = player.getInventory();
+        for (int slot = 0; slot < STORAGE_SIZE; slot++) {
+            ItemStack item = inventory.getItem(slot);
+            if (classify(item) == category) {
+                result.add(new SlotItem(slot, item));
+            }
+        }
+        ItemStack offhand = inventory.getItemInOffHand();
+        if (classify(offhand) == category) {
+            result.add(new SlotItem(OFFHAND_SLOT, offhand));
+        }
+        return result;
+    }
+
+    private ItemStack itemAt(PlayerInventory inventory, int slot) {
+        return slot == OFFHAND_SLOT ? inventory.getItemInOffHand() : inventory.getItem(slot);
+    }
+
+    private void setItemAt(PlayerInventory inventory, int slot, ItemStack item) {
+        if (slot == OFFHAND_SLOT) {
+            inventory.setItemInOffHand(item);
+        } else {
+            inventory.setItem(slot, item);
+        }
+    }
+
+    private int findEmptyStorageSlot(PlayerInventory inventory, int excludeA, int excludeB) {
+        for (int slot = 0; slot < STORAGE_SIZE; slot++) {
+            if (slot == excludeA || slot == excludeB) continue;
+            ItemStack item = inventory.getItem(slot);
+            if (item == null || item.getType().isAir()) return slot;
+        }
+        return -1;
+    }
+
+    // ------------------------------------------------------------------
+    // 归位 / 去重
+    // ------------------------------------------------------------------
+
+    private void tickAll() {
+        if (!active) return;
+        for (Player player : Bukkit.getOnlinePlayers()) {
+            if (isManaged(player)) {
+                normalize(player);
+            }
+        }
+    }
+
+    private void normalize(Player player) {
+        if (!active || !isManaged(player)) {
+            return;
+        }
+        PlayerInventory inventory = player.getInventory();
+        normalizeCategory(player, inventory, Category.PRIMARY, primarySlot);
+        normalizeCategory(player, inventory, Category.SECONDARY, secondarySlot);
+        normalizeCategory(player, inventory, Category.MELEE, meleeSlot);
+        normalizeThrowables(player, inventory);
+    }
+
+    private void normalizeCategory(Player player, PlayerInventory inventory,
+                                   Category category, int targetSlot) {
+        List<SlotItem> items = find(player, category);
+        if (items.isEmpty()) return;
+
+        int keepSlot = -1;
+        for (SlotItem slotItem : items) {
+            if (slotItem.slot == targetSlot) {
+                keepSlot = slotItem.slot;
+                break;
+            }
+        }
+        if (keepSlot < 0) keepSlot = items.get(0).slot;
+
+        for (SlotItem slotItem : items) {
+            if (slotItem.slot == keepSlot) continue;
+            if (!dropDuplicates) {
+                // 排查模式：不删也不丢，保留现场，方便看看到底是哪一步多出来的
+                continue;
+            }
+            setItemAt(inventory, slotItem.slot, null);
+            dropAtFeet(player, slotItem.item);
+            if (allowMessage(player, "duplicate", 3000L)) {
+                msg(player, "duplicate-dropped", Map.of(
+                        "category", category.displayName,
+                        "item", itemName(slotItem.item)));
+            }
+            if (debug) {
+                plugin.getLogger().info("[loadout] " + player.getName()
+                        + " 多出的 " + category.displayName + " 已丢弃："
+                        + itemName(slotItem.item));
+            }
+        }
+
+        ItemStack keep = itemAt(inventory, keepSlot);
+        if (keep != null && keepSlot != targetSlot) {
+            moveItem(player, keep, keepSlot, targetSlot);
+        }
+    }
+
+    private void normalizeThrowables(Player player, PlayerInventory inventory) {
+        if (throwableLimit > 0) {
+            int total = countThrowables(player);
+            if (total > throwableLimit) {
+                int excess = total - throwableLimit;
+                int removed = removeThrowableAmount(player, null, excess, true);
+                if (removed > 0 && allowMessage(player, "throwable-excess", 3000L)) {
+                    msg(player, "throwable-excess", Map.of(
+                            "limit", String.valueOf(throwableLimit),
+                            "amount", String.valueOf(removed)));
+                }
+            }
+        }
+
+        List<SlotItem> stacks = find(player, Category.THROWABLE);
+        if (stacks.isEmpty()) return;
+
+        boolean targetHasThrowable = stacks.stream()
+                .anyMatch(slotItem -> slotItem.slot == throwableSlot);
+        if (!targetHasThrowable) {
+            SlotItem first = stacks.get(0);
+            moveItem(player, first.item, first.slot, throwableSlot);
+        }
+    }
+
+    private void moveItem(Player player, ItemStack item, int fromSlot, int targetSlot) {
+        if (item == null || item.getType().isAir() || fromSlot == targetSlot) return;
+        PlayerInventory inventory = player.getInventory();
+
+        ItemStack occupant = itemAt(inventory, targetSlot);
+        if (occupant != null && !occupant.getType().isAir()) {
+            int empty = findEmptyStorageSlot(inventory, targetSlot, fromSlot);
+            if (empty >= 0) {
+                setItemAt(inventory, empty, occupant);
+            } else {
+                dropAtFeet(player, occupant);
+                if (debug) {
+                    plugin.getLogger().info("[loadout] " + player.getName()
+                            + " 背包已满，槽位 " + targetSlot
+                            + " 的 " + itemName(occupant) + " 已丢到脚下。");
+                }
+            }
+        }
+
+        setItemAt(inventory, fromSlot, null);
+        setItemAt(inventory, targetSlot, item);
+        sync(player);
+    }
+
+    @SuppressWarnings("deprecation")
+    private void sync(Player player) {
+        try {
+            player.updateInventory();
+        } catch (Throwable ignored) {
+            // 某些混合端（Arclight）对 updateInventory 的实现可能有差异，失败不影响下次刷新
+        }
+    }
+
+    private void dropAtFeet(Player player, ItemStack item) {
+        if (item == null || item.getType().isAir()) return;
+        Location location = player.getLocation();
+        Item drop = player.getWorld().dropItemNaturally(location, item.clone());
+        drop.setPickupDelay(40);
+        try {
+            drop.setOwner(player.getUniqueId());
+        } catch (Throwable ignored) {
+            // 老版本/混合端没有 setOwner 时忽略
+        }
+    }
+
+    private int countThrowables(Player player) {
+        int total = 0;
+        for (SlotItem slotItem : find(player, Category.THROWABLE)) {
+            total += Math.max(0, slotItem.item.getAmount());
+        }
+        return total;
+    }
+
+    /**
+     * 从背包里扣除指定数量的投掷物。
+     *
+     * @param template    要扣的类型；null 表示任意投掷物
+     * @param amount      要扣的数量
+     * @param dropRemoved true = 扣下来的物品丢到脚下；false = 直接删除（用于购买超限退款）
+     * @return 实际扣掉的数量
+     */
+    private int removeThrowableAmount(Player player, ItemStack template,
+                                      int amount, boolean dropRemoved) {
+        if (amount <= 0) return 0;
+
+        int remaining = amount;
+        // 两轮：第一轮只扣同类型，第二轮再兜底扣任意投掷物。
+        // 每轮都重新扫描背包，避免拿着“扣之前”的 ItemStack 重复扣同一格。
+        for (int pass = 0; pass < 2 && remaining > 0; pass++) {
+            List<SlotItem> stacks = find(player, Category.THROWABLE);
+            // 先从背包扣，再动第 4 格
+            stacks.sort(Comparator.comparingInt(slotItem ->
+                    slotItem.slot == throwableSlot ? 1 : 0));
+            for (SlotItem slotItem : stacks) {
+                if (remaining <= 0) break;
+                if (pass == 0 && template != null
+                        && !sameThrowableType(slotItem.item, template)) {
+                    continue;
+                }
+                int take = Math.min(remaining, slotItem.item.getAmount());
+                applyRemove(player, player.getInventory(), slotItem, take, dropRemoved);
+                remaining -= take;
+            }
+        }
+
+        return amount - remaining;
+    }
+
+    private void applyRemove(Player player, PlayerInventory inventory,
+                             SlotItem slotItem, int take, boolean dropRemoved) {
+        if (take <= 0) return;
+        int left = slotItem.item.getAmount() - take;
+        if (left <= 0) {
+            setItemAt(inventory, slotItem.slot, null);
+        } else {
+            ItemStack copy = slotItem.item.clone();
+            copy.setAmount(left);
+            setItemAt(inventory, slotItem.slot, copy);
+        }
+        if (dropRemoved) {
+            ItemStack drop = slotItem.item.clone();
+            drop.setAmount(take);
+            dropAtFeet(player, drop);
+        }
+        sync(player);
+    }
+
+    // ------------------------------------------------------------------
+    // 购买
+    // ------------------------------------------------------------------
+
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onMoneyChange(WbdMoneyChangeEvent event) {
+        if (event.getDelta() >= 0) return;
+        Player player = event.getPlayer();
+        if (player == null) return;
+        lastSpend.put(player.getUniqueId(),
+                new Spend(-event.getDelta(), System.currentTimeMillis()));
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onInventoryOpen(InventoryOpenEvent event) {
+        if (!(event.getPlayer() instanceof Player player)) return;
+        ShopManager shop = shopManager();
+        if (shop == null || !shop.isShopInventory(event.getView().getTopInventory())) {
+            return;
+        }
+        reloadPricesIfChanged();
+        // 先归位再快照：保证购买判定时旧武器已经在固定槽里，
+        // 同款枪的“旧/新”不会因为旧枪在背包里而认反。
+        normalize(player);
+        scheduleNormalize(player);
+        snapshotCounts(player);
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = false)
+    public void onInventoryClick(InventoryClickEvent event) {
+        if (!(event.getWhoClicked() instanceof Player player)) return;
+
+        ShopManager shop = shopManager();
+        if (shop != null && shop.isShopInventory(event.getView().getTopInventory())) {
+            handleShopClick(player, event, shop);
+            return;
+        }
+
+        if (isManaged(player)) {
+            scheduleNormalize(player);
+        }
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = false)
+    public void onInventoryDrag(InventoryDragEvent event) {
+        if (event.getWhoClicked() instanceof Player player && isManaged(player)) {
+            scheduleNormalize(player);
+        }
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onInventoryClose(InventoryCloseEvent event) {
+        if (!(event.getPlayer() instanceof Player player)) return;
+        ShopManager shop = shopManager();
+        if (shop != null && shop.isShopInventory(event.getView().getTopInventory())) {
+            scheduleNormalize(player);
+        }
+    }
+
+    private void handleShopClick(Player player, InventoryClickEvent event, ShopManager shop) {
+        int rawSlot = event.getRawSlot();
+        var top = event.getView().getTopInventory();
+        if (rawSlot < 0 || rawSlot >= top.getSize()) return;
+
+        ItemStack clicked = top.getItem(rawSlot);
+        if (clicked == null || clicked.getType().isAir()) return;
+
+        WarZBombDefusePlugin wbd = plugin.getWbd();
+        if (wbd == null) return;
+        String marker = ItemUtil.getMarker(clicked, wbd);
+        if (!marker.startsWith(SHOP_MARKER_PREFIX)) return;
+
+        String itemId = marker.substring(SHOP_MARKER_PREFIX.length());
+        ShopItem shopItem = findShopItem(shop, itemId, rawSlot, player);
+        if (shopItem == null) return;
+
+        ArenaSession session = session(player);
+        if (session == null) return;
+
+        // 正常情况下打开商店时已经快照过。这里用 computeIfAbsent 兜底：
+        // 即使缓存被回合重置清掉，也能按“本轮从 0 开始”判断第一次购买。
+        Map<String, Integer> counts = purchaseCounts.computeIfAbsent(
+                player.getUniqueId(), ignored -> new HashMap<>());
+
+        int before = counts.getOrDefault(itemId, 0);
+        int after = session.getShopPurchaseCount(player, itemId);
+        if (after < before) {
+            // 回合重置后购买计数会归零；把缓存一起纠正，避免第一次购买被漏掉
+            before = 0;
+        }
+        if (after <= before) {
+            // 钱不够 / 不在购买时间 / 不在购买区 / 达到限购，WBD 会直接拒绝
+            return;
+        }
+        counts.put(itemId, after);
+
+        // 付费商品必须看到同 tick 的真实扣钱记录；否则可能是 WBD 拒绝购买、
+        // 或者购买计数因重载被误读，绝不能因此给玩家退款。
+        int price = shopItem.getPrice();
+        if (price > 0 && !hasRecentSpend(player, price)) {
+            return;
+        }
+
+        ItemStack give = shopItem.getGiveStack();
+        if (give == null || give.getType().isAir()) {
+            scheduleNormalize(player);
+            return;
+        }
+
+        Category category = classify(give);
+        if (category == Category.NONE || category == Category.UTILITY) {
+            scheduleNormalize(player);
+            return;
+        }
+
+        // WBD 的 handleClick 已经在 LOWEST 阶段完成扣钱/发物品，这里同步处理即可。
+        // 不用下一 tick：避免玩家在 50ms 内死亡/离场导致购买处理不到。
+        if (!isManaged(player)) return;
+        handlePurchase(player, session, shopItem, give, category);
+        normalize(player);
+    }
+
+    private ShopItem findShopItem(ShopManager shop, String itemId, int slot, Player player) {
+        ArenaSession session = session(player);
+        Team team = session == null ? null : session.getTeam(player);
+        ShopItem fallback = null;
+        for (ShopItem item : shop.getItems()) {
+            if (!itemId.equals(item.getId())) continue;
+            if (item.getSlot() != slot) continue;
+            if (item.getTeam() != null && item.getTeam() != team) continue;
+            if (item.getTeam() != null) return item;
+            fallback = item;
+        }
+        return fallback;
+    }
+
+    private void handlePurchase(Player player, ArenaSession session, ShopItem shopItem,
+                                ItemStack give, Category category) {
+        switch (category) {
+            case PRIMARY, SECONDARY, MELEE ->
+                    handleWeaponPurchase(player, session, shopItem, give, category);
+            case THROWABLE ->
+                    handleThrowablePurchase(player, session, shopItem, give);
+            default -> {
+                // 功能道具不限购，只做槽位归位
+            }
+        }
+    }
+
+    /**
+     * 从购买后的同类物品里区分“旧武器”和“刚买的新武器”。
+     *
+     * <p>这里刻意不依赖任何缓存，只看背包现状：
+     * <ol>
+     *   <li>只有 1 把且就是刚买的枪 → 旧武器已不在，按“无旧武器”处理；</li>
+     *   <li>只有 1 把但不是刚买的枪 → 新物品没进背包（背包满），按“新物品缺失”处理；</li>
+     *   <li>2 把 → 用 GunId/材质+显示名认出刚买的那把，另一把就是旧武器；</li>
+     *   <li>2 把同款 → 固定槽里的当旧武器，另一把当新武器；</li>
+     *   <li>3 把以上 → 只挑一对处理，多余的交给 normalize 丢掉。</li>
+     * </ol>
+     */
+    private PurchaseItems resolvePurchaseItems(List<SlotItem> items, ItemStack give,
+                                               int targetSlot) {
+        if (items.isEmpty()) return new PurchaseItems(null, null);
+
+        if (items.size() == 1) {
+            SlotItem only = items.get(0);
+            return sameItem(only.item, give)
+                    ? new PurchaseItems(null, only)
+                    : new PurchaseItems(only, null);
+        }
+
+        if (items.size() == 2) {
+            SlotItem a = items.get(0);
+            SlotItem b = items.get(1);
+            boolean aMatch = sameItem(a.item, give);
+            boolean bMatch = sameItem(b.item, give);
+
+            if (aMatch && bMatch) {
+                // 同款枪：固定槽里的那把是旧武器
+                if (a.slot == targetSlot) return new PurchaseItems(a, b);
+                if (b.slot == targetSlot) return new PurchaseItems(b, a);
+                return new PurchaseItems(a, b);
+            }
+            if (aMatch) return new PurchaseItems(b, a);
+            if (bMatch) return new PurchaseItems(a, b);
+
+            // 两把都不是刚买的枪：说明新物品没进背包，旧武器还在
+            SlotItem old = a.slot == targetSlot ? a : (b.slot == targetSlot ? b : a);
+            return new PurchaseItems(old, null);
+        }
+
+        // 3 把以上：先找刚买的那把；找不到就说明新物品没进背包。
+        SlotItem target = items.stream()
+                .filter(slotItem -> slotItem.slot == targetSlot)
+                .findFirst().orElse(null);
+        List<SlotItem> matches = items.stream()
+                .filter(slotItem -> sameItem(slotItem.item, give))
+                .toList();
+
+        if (matches.size() >= 2) {
+            // 同款多把：固定槽里那把是旧武器，另一把是同款的新/多余物品
+            SlotItem old = target != null && sameItem(target.item, give)
+                    ? target
+                    : matches.get(0);
+            SlotItem newItem = matches.stream()
+                    .filter(slotItem -> slotItem.slot != old.slot)
+                    .findFirst().orElse(null);
+            return new PurchaseItems(old, newItem);
+        }
+
+        if (matches.size() == 1) {
+            SlotItem newItem = matches.get(0);
+            SlotItem old = target != null && target.slot != newItem.slot
+                    ? target
+                    : items.stream()
+                    .filter(slotItem -> slotItem.slot != newItem.slot)
+                    .findFirst().orElse(null);
+            return new PurchaseItems(old, newItem);
+        }
+
+        SlotItem old = target != null ? target : items.get(0);
+        return new PurchaseItems(old, null);
+    }
+
+    private void handleWeaponPurchase(Player player, ArenaSession session, ShopItem shopItem,
+                                      ItemStack give, Category category) {
+        PlayerInventory inventory = player.getInventory();
+        int targetSlot = slotOf(category);
+        int price = shopItem.getPrice();
+
+        List<SlotItem> items = find(player, category);
+        PurchaseItems resolved = resolvePurchaseItems(items, give, targetSlot);
+        SlotItem oldItem = resolved.oldItem();
+        SlotItem newItem = resolved.newItem();
+
+        if (newItem == null) {
+            // 背包满了 / WBD 发了但没进背包：把这次购买的钱退回去，旧武器保留
+            refund(session, player, price);
+            msg(player, "purchase-missing", Map.of("price", String.valueOf(price)));
+            if (debug) {
+                plugin.getLogger().warning("[loadout] " + player.getName()
+                        + " 购买了 " + itemName(give) + "，但背包里找不到新物品，已退款 "
+                        + price + "。");
+            }
+            return;
+        }
+
+        if (oldItem == null) {
+            // 本来就没有同类武器：直接归位
+            moveItem(player, newItem.item, newItem.slot, targetSlot);
+            return;
+        }
+
+        boolean same = sameItem(oldItem.item, newItem.item);
+        if (same && sameGunPolicy == SameGunPolicy.BLOCK) {
+            setItemAt(inventory, newItem.slot, null);
+            if (price > 0) {
+                refund(session, player, price);
+                msg(player, "same-gun-blocked", Map.of(
+                        "gun", itemName(newItem.item),
+                        "price", String.valueOf(price)));
+            } else {
+                msg(player, "same-gun-blocked-free", Map.of(
+                        "gun", itemName(newItem.item)));
+            }
+            if (debug) {
+                plugin.getLogger().info("[loadout] " + player.getName()
+                        + " 重复购买 " + itemName(newItem.item) + "，已取消并退款。");
+            }
+            return;
+        }
+
+        int refund = 0;
+        if (refundOldWeapon && !(same && sameGunPolicy == SameGunPolicy.REPLACE_NO_REFUND)) {
+            refund = refundPrice(oldItem.item);
+        }
+
+        String oldName = itemName(oldItem.item);
+        String newName = itemName(newItem.item);
+        setItemAt(inventory, oldItem.slot, null);
+        if (refund > 0) {
+            refund(session, player, refund);
+        }
+        moveItem(player, newItem.item, newItem.slot, targetSlot);
+
+        if (refund > 0) {
+            msg(player, "replaced", Map.of(
+                    "old", oldName,
+                    "new", newName,
+                    "refund", String.valueOf(refund)));
+        } else {
+            msg(player, "replaced-no-refund", Map.of(
+                    "old", oldName,
+                    "new", newName));
+        }
+        if (debug) {
+            plugin.getLogger().info("[loadout] " + player.getName() + " 替换 "
+                    + oldName + " -> " + newName + "，退款 " + refund + "。");
+        }
+    }
+
+    private void handleThrowablePurchase(Player player, ArenaSession session,
+                                         ShopItem shopItem, ItemStack give) {
+        if (throwableLimit > 0) {
+            int total = countThrowables(player);
+            int over = total - throwableLimit;
+            if (over > 0) {
+                int amount = Math.max(1, give.getAmount());
+                int remove = Math.min(over, amount);
+                int removed = removeThrowableAmount(player, give, remove, false);
+                int refund = removed >= amount
+                        ? shopItem.getPrice()
+                        : (int) Math.floor(shopItem.getPrice() * (double) removed / amount);
+                if (refund > 0) {
+                    refund(session, player, refund);
+                    msg(player, "throwable-full", Map.of(
+                            "limit", String.valueOf(throwableLimit),
+                            "refund", String.valueOf(refund)));
+                } else {
+                    msg(player, "throwable-full-no-refund", Map.of(
+                            "limit", String.valueOf(throwableLimit)));
+                }
+                if (debug) {
+                    plugin.getLogger().info("[loadout] " + player.getName()
+                            + " 投掷物超限，移除 " + removed + "，退款 " + refund + "。");
+                }
+            }
+        }
+        normalizeThrowables(player, player.getInventory());
+    }
+
+    private int refundPrice(ItemStack oldItem) {
+        if (oldItem == null || shopPrices == null) return 0;
+        try {
+            String id = gunId(oldItem);
+            if (id != null) {
+                // TACZ 枪只认 GunId 的精确价格，绝不回退材质：
+                // 所有枪共用 TACZ_MODERN_KINETIC_GUN，回退会把别的枪价格套上来。
+                return Math.max(0, shopPrices.gunPriceOf(id));
+            }
+            if (oldItem.getType().name().equals(taczGunMaterialName)) {
+                // 是 TACZ 枪却拿不到 GunId：宁可退款 0，也不要套错价格
+                return 0;
+            }
+            // 非 TACZ 物品（LRTactical、原版道具）才允许按材质/显示名查价
+            return shopPrices.priceOf(oldItem);
+        } catch (Throwable t) {
+            if (debug) {
+                plugin.getLogger().warning("[loadout] 查询旧武器价格失败："
+                        + itemName(oldItem) + " - " + t);
+            }
+            return 0;
+        }
+    }
+
+    private boolean refund(ArenaSession session, Player player, int amount) {
+        if (amount <= 0) return false;
+        try {
+            boolean ok = session.addMoney(player, amount);
+            if (!ok && debug) {
+                plugin.getLogger().warning("[loadout] " + player.getName()
+                        + " 退款 " + amount + " 失败（可能已达上限）。");
+            }
+            return ok;
+        } catch (Throwable t) {
+            plugin.getLogger().warning("装备槽守卫：给 " + player.getName()
+                    + " 退款 " + amount + " 时出错：" + t);
+            return false;
+        }
+    }
+
+    private boolean hasRecentSpend(Player player, int price) {
+        Spend spend = lastSpend.get(player.getUniqueId());
+        return spend != null
+                && spend.amount() == price
+                && System.currentTimeMillis() - spend.at() <= 500L;
+    }
+
+    private void snapshotAllArenaCounts() {
+        WarZBombDefusePlugin wbd = plugin.getWbd();
+        if (wbd == null || wbd.getArenaManager() == null) return;
+        for (ArenaSession session : wbd.getArenaManager().getSessions()) {
+            for (PlayerRecord record : session.getPlayers()) {
+                Player player = Bukkit.getPlayer(record.getUuid());
+                if (player != null && player.isOnline()) {
+                    normalize(player);
+                    snapshotCounts(player);
+                }
+            }
+        }
+    }
+
+    private void snapshotCounts(Player player) {
+        ArenaSession session = session(player);
+        ShopManager shop = shopManager();
+        if (session == null || shop == null) return;
+
+        Map<String, Integer> counts = new HashMap<>();
+        for (ShopItem item : shop.getItems()) {
+            counts.put(item.getId(),
+                    session.getShopPurchaseCount(player, item.getId()));
+        }
+        purchaseCounts.put(player.getUniqueId(), counts);
+    }
+
+    // ------------------------------------------------------------------
+    // 拾取
+    // ------------------------------------------------------------------
+
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onPickup(EntityPickupItemEvent event) {
+        if (!(event.getEntity() instanceof Player player)) return;
+        if (!isManaged(player)) return;
+
+        ItemStack item = event.getItem().getItemStack();
+        if (item == null || item.getType().isAir()) return;
+
+        Category category = classify(item);
+        switch (category) {
+            case PRIMARY, SECONDARY, MELEE -> {
+                if (!find(player, category).isEmpty()) {
+                    event.setCancelled(true);
+                    if (allowMessage(player, "pickup-" + category, 1500L)) {
+                        msg(player, "pickup-blocked", Map.of(
+                                "category", category.displayName));
+                    }
+                    return;
+                }
+                scheduleNormalize(player);
+            }
+            case THROWABLE -> {
+                if (throwableLimit > 0
+                        && countThrowables(player) + Math.max(0, item.getAmount()) > throwableLimit) {
+                    event.setCancelled(true);
+                    if (allowMessage(player, "pickup-throwable", 1500L)) {
+                        msg(player, "throwable-pickup-blocked", Map.of(
+                                "limit", String.valueOf(throwableLimit)));
+                    }
+                    return;
+                }
+                scheduleNormalize(player);
+            }
+            default -> {
+                // 功能道具不限制
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // 其它生命周期
+    // ------------------------------------------------------------------
+
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onPlayerJoinArena(WbdPlayerJoinArenaEvent event) {
+        Player player = event.getPlayer();
+        if (player == null) return;
+        scheduleNormalize(player);
+        snapshotCounts(player);
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onRoundStart(WbdRoundStartEvent event) {
+        // TACZ 枪包可能在两回合之间 reload，清掉类型缓存重新解析
+        gunCategoryCache.clear();
+        String arenaId = event.getArenaId();
+        for (Player player : Bukkit.getOnlinePlayers()) {
+            if (inArena(player, arenaId)) {
+                purchaseCounts.remove(player.getUniqueId());
+            }
+        }
+        Bukkit.getScheduler().runTask(plugin, () -> {
+            if (!active) return;
+            for (Player player : Bukkit.getOnlinePlayers()) {
+                if (!inArena(player, arenaId)) continue;
+                normalize(player);
+                snapshotCounts(player);
+            }
+        });
+    }
+
+    @EventHandler
+    public void onRespawn(PlayerRespawnEvent event) {
+        Player player = event.getPlayer();
+        scheduleNormalize(player);
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onDrop(PlayerDropItemEvent event) {
+        Player player = event.getPlayer();
+        if (!isManaged(player)) return;
+        // 丢弃后下一 tick 再归位；购买判定本身只看背包现状，不依赖缓存
+        scheduleNormalize(player);
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onSwapHands(PlayerSwapHandItemsEvent event) {
+        if (isManaged(event.getPlayer())) {
+            scheduleNormalize(event.getPlayer());
+        }
+    }
+
+    @EventHandler
+    public void onQuit(PlayerQuitEvent event) {
+        UUID uuid = event.getPlayer().getUniqueId();
+        purchaseCounts.remove(uuid);
+        lastSpend.remove(uuid);
+        scheduledNormalize.remove(uuid);
+        messageCooldown.keySet().removeIf(key -> key.startsWith(uuid + ":"));
+    }
+
+    private void scheduleNormalize(Player player) {
+        if (!active || player == null || !player.isOnline()) return;
+        UUID uuid = player.getUniqueId();
+        if (!scheduledNormalize.add(uuid)) return;
+        Bukkit.getScheduler().runTask(plugin, () -> {
+            scheduledNormalize.remove(uuid);
+            if (active && player.isOnline()) {
+                normalize(player);
+            }
+        });
+    }
+
+    private boolean inArena(Player player, String arenaId) {
+        ArenaSession session = session(player);
+        return session != null && session.getConfig() != null
+                && arenaId.equals(session.getConfig().getId());
+    }
+
+    // ------------------------------------------------------------------
+    // 工具
+    // ------------------------------------------------------------------
+
+    private boolean isManaged(Player player) {
+        if (player == null || !player.isOnline()) return false;
+        if (player.hasPermission(BYPASS_PERMISSION)) return false;
+
+        ArenaSession session = session(player);
+        if (session == null) return false;
+        if (session.isSpectator(player)) return false;
+
+        PlayerRecord record = session.getRecord(player);
+        return record != null && record.isAlive();
+    }
+
+    private ArenaSession session(Player player) {
+        WarZBombDefusePlugin wbd = plugin.getWbd();
+        if (wbd == null || wbd.getArenaManager() == null) return null;
+        return wbd.getArenaManager().getSession(player);
+    }
+
+    private ShopManager shopManager() {
+        WarZBombDefusePlugin wbd = plugin.getWbd();
+        return wbd == null ? null : wbd.getShopManager();
+    }
+
+    private void reloadPricesIfChanged() {
+        if (shopFile == null || shopPrices == null) return;
+        long modified = shopFile.isFile() ? shopFile.lastModified() : -1L;
+        if (modified == shopFileModified) return;
+        shopFileModified = modified;
+        shopPrices.load(shopFile, plugin.getTacZApi());
+        if (debug) {
+            plugin.getLogger().info("[loadout] 已重载商店价格缓存："
+                    + shopPrices.gunCount() + " 把枪 / "
+                    + shopPrices.materialCount() + " 种材质。");
+        }
+    }
+
+    private boolean allowMessage(Player player, String key, long cooldownMs) {
+        String mapKey = player.getUniqueId() + ":" + key;
+        long now = System.currentTimeMillis();
+        Long last = messageCooldown.get(mapKey);
+        if (last != null && now - last < cooldownMs) return false;
+        messageCooldown.put(mapKey, now);
+        return true;
+    }
+
+    private void msg(Player player, String key, Map<String, String> placeholders) {
+        String raw = plugin.getConfig().getString("modules.loadout-guard.messages." + key);
+        if (raw == null || raw.isEmpty()) return;
+        String text = raw;
+        for (var entry : placeholders.entrySet()) {
+            text = text.replace("%" + entry.getKey() + "%", entry.getValue());
+        }
+        player.sendMessage(ChatColor.translateAlternateColorCodes('&', text));
+    }
+
+    // ------------------------------------------------------------------
+    // 内部类型
+    // ------------------------------------------------------------------
+
+    private record SlotItem(int slot, ItemStack item) {
+    }
+
+    private record Spend(int amount, long at) {
+    }
+
+    private record PurchaseItems(SlotItem oldItem, SlotItem newItem) {
+    }
+
+    private enum SameGunPolicy {
+        BLOCK,
+        REPLACE_NO_REFUND,
+        REPLACE_REFUND;
+
+        static SameGunPolicy parse(String raw) {
+            if (raw == null) return BLOCK;
+            return switch (raw.trim().toLowerCase(Locale.ROOT)) {
+                case "replace-no-refund" -> REPLACE_NO_REFUND;
+                case "replace-refund" -> REPLACE_REFUND;
+                default -> BLOCK;
+            };
+        }
+    }
+
+    private enum Category {
+        PRIMARY("主武器"),
+        SECONDARY("副武器"),
+        MELEE("近战武器"),
+        THROWABLE("投掷物"),
+        UTILITY("功能道具"),
+        NONE("物品");
+
+        private final String displayName;
+
+        Category(String displayName) {
+            this.displayName = displayName;
+        }
+
+        static Category parse(String raw) {
+            if (raw == null) return null;
+            return switch (raw.trim().toLowerCase(Locale.ROOT)) {
+                case "primary" -> PRIMARY;
+                case "secondary" -> SECONDARY;
+                case "melee" -> MELEE;
+                case "throwable" -> THROWABLE;
+                case "utility", "none", "ignore" -> UTILITY;
+                default -> null;
+            };
+        }
+    }
+}

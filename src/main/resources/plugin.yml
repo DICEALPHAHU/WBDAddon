@@ -5,7 +5,7 @@ version: ${project.version}
 main: alphahu.wbdaddon.WBDAddon
 api-version: '1.20'
 authors: [AlphaHu]
-description: WarZBombDefuse 的第三方附加组件合集：击杀报告、回合伤害统计、比赛状态显示、竞技场饥饿锁定、JourneyMap 桥接。
+description: WarZBombDefuse 的第三方附加组件合集：击杀报告、回合伤害统计、比赛状态显示、竞技场饥饿锁定、JourneyMap 桥接、装备槽守卫、比赛投票。
 website: https://github.com/DICEALPHAHU/WBDAddon
 
 # 硬依赖：没有 WarZBombDefuse 就不加载
@@ -33,10 +33,35 @@ commands:
     usage: /wbda
     aliases: [wbdmenu]
 
+  # --------------------------------------------------------------
+  # 比赛投票：/vyes /vno 表态，其余命令负责发起
+  # --------------------------------------------------------------
+  vyes:
+    description: 同意当前进行中的投票
+    usage: /vyes
+  vno:
+    description: 反对当前进行中的投票
+    usage: /vno
+  vkick:
+    description: 投票踢出同阵营玩家
+    usage: /vkick <同阵营玩家>
+  vmap:
+    description: 投票更换地图（超过 2/3 同意后提前结算并换图重开）
+    usage: /vmap <地图ID>
+  vsdr:
+    description: 投票投降（全队同意后判对方获胜）
+    usage: /vsdr
+  unpause:
+    description: 暂停期间发起「提前解除暂停」的全场投票
+    usage: /unpause
+
 permissions:
   wbdaddon.use:
     description: 允许使用 WBDAddon 的基础命令
     default: true
   wbdaddon.admin:
     description: 允许重载配置、管理模块
+    default: op
+  wbdaddon.loadout.bypass:
+    description: 绕过装备槽守卫（不限主/副/近战/投掷物，不强制归位）
     default: op

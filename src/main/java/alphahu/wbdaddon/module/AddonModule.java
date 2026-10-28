@@ -25,6 +25,17 @@ public interface AddonModule {
     /** 模块初始化，注册监听器、启动任务等。 */
     void onEnable();
 
+    /**
+     * 模块在 onEnable 之后是否真的可用。
+     *
+     * <p>用于“依赖缺失时主动跳过”的场景：模块可以正常返回，但通过这里告诉
+     * ModuleManager 不要把自己算进已启用列表，避免日志出现“已启用”但实际没监听。
+     * 默认恒为 true，不影响现有模块。
+     */
+    default boolean isAvailable() {
+        return true;
+    }
+
     /** 模块卸载，注销监听器、取消任务、清理数据等。 */
     void onDisable();
 }

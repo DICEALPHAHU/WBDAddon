@@ -633,6 +633,11 @@ public class MenuModule implements AddonModule, Listener {
             player.sendMessage(color("&c找不到竞技场 " + arenaId + "。"));
             return;
         }
+        // 被本场投票踢出去的人，菜单这边先拦一道，别让他先进大厅再被弹回去
+        if (voteBanned(player, arenaId)) {
+            player.sendMessage(color("&c你已被投票踢出本场比赛，无法再加入。"));
+            return;
+        }
         boolean joined;
         try {
             joined = session.join(player, mode);
@@ -646,6 +651,15 @@ public class MenuModule implements AddonModule, Listener {
         } else {
             player.sendMessage(color("&c加入失败（房间已满或状态不允许）。"));
         }
+    }
+
+    /** 本场被投票踢出的玩家不允许再加入。 */
+    private boolean voteBanned(Player player, String arenaId) {
+        AddonModule module = plugin.getModuleManager().getModule("vote");
+        if (module instanceof VoteModule votes && plugin.getModuleManager().isEnabled(module)) {
+            return votes.isBanned(player, arenaId);
+        }
+        return false;
     }
 
     // ------------------------------------------------------------------

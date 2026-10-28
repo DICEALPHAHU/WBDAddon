@@ -3,6 +3,7 @@ package alphahu.wbdaddon;
 import alphahu.wbdaddon.api.WbdAddonApi;
 import alphahu.wbdaddon.command.MenuCommand;
 import alphahu.wbdaddon.command.PauseCommand;
+import alphahu.wbdaddon.command.VoteCommand;
 import alphahu.wbdaddon.command.WBDAddonCommand;
 import alphahu.wbdaddon.mode.ModeRegistry;
 import alphahu.wbdaddon.module.ArenaDropsModule;
@@ -12,6 +13,7 @@ import alphahu.wbdaddon.module.BombDefuseSoundModule;
 import alphahu.wbdaddon.module.FreezeCountdownModule;
 import alphahu.wbdaddon.module.JourneyMapModule;
 import alphahu.wbdaddon.module.KillReportsModule;
+import alphahu.wbdaddon.module.LoadoutGuardModule;
 import alphahu.wbdaddon.module.MatchStatusModule;
 import alphahu.wbdaddon.module.MenuModule;
 import alphahu.wbdaddon.module.ModuleManager;
@@ -20,6 +22,7 @@ import alphahu.wbdaddon.module.RoundEventsModule;
 import alphahu.wbdaddon.module.RoundSummaryModule;
 import alphahu.wbdaddon.module.TeamArmorModule;
 import alphahu.wbdaddon.module.TechnicalPauseModule;
+import alphahu.wbdaddon.module.VoteModule;
 import com.warz.bombdefuse.WarZBombDefusePlugin;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
@@ -134,11 +137,13 @@ public final class WBDAddon extends JavaPlugin {
         moduleManager.register(new PositionBackupModule(this));
         moduleManager.register(new ArenaDropsModule(this));
         moduleManager.register(new TeamArmorModule(this));
+        moduleManager.register(new LoadoutGuardModule(this));
         moduleManager.register(new RoundEventsModule(this));
         moduleManager.register(new RoundSummaryModule(this));
         moduleManager.register(new FreezeCountdownModule(this));
         moduleManager.register(new MenuModule(this));
         moduleManager.register(new TechnicalPauseModule(this));
+        moduleManager.register(new VoteModule(this));
         moduleManager.register(new JourneyMapModule(this));
 
         // 5. 启用所有模块
@@ -172,6 +177,14 @@ public final class WBDAddon extends JavaPlugin {
         if (menuCmd != null) {
             menuCmd.setExecutor(new MenuCommand(this));
         }
+
+        // 投票：/vyes /vno 表态，/vkick /vmap /vsdr /unpause 发起
+        registerVoteCommand("vyes", VoteCommand.Action.YES);
+        registerVoteCommand("vno", VoteCommand.Action.NO);
+        registerVoteCommand("vkick", VoteCommand.Action.KICK);
+        registerVoteCommand("vmap", VoteCommand.Action.MAP);
+        registerVoteCommand("vsdr", VoteCommand.Action.SURRENDER);
+        registerVoteCommand("unpause", VoteCommand.Action.UNPAUSE);
 
         getLogger().info("WBDAddon 已加载，共启用 " + moduleManager.getEnabledModules().size() + " 个模块，"
                 + "已注册 " + modeRegistry.getModes().size() + " 个游戏模式。");
@@ -218,6 +231,21 @@ public final class WBDAddon extends JavaPlugin {
     }
 
     /**
+     * 把 plugin.yml 里的一个投票命令挂到共用的 {@link VoteCommand} 上。
+     * 命令没在 plugin.yml 里声明（或被别的插件抢注）时静默跳过，不影响其他命令。
+     */
+    private void registerVoteCommand(String name, VoteCommand.Action action) {
+        var command = getCommand(name);
+        if (command == null) {
+            getLogger().warning("命令 /" + name + " 未注册成功，投票功能可能不完整。");
+            return;
+        }
+        VoteCommand executor = new VoteCommand(this, action);
+        command.setExecutor(executor);
+        command.setTabCompleter(executor);
+    }
+
+    /**
      * 读取 plugin.yml 里的版本号。
      * 新 API getPluginMeta() 仍标记为实验性，故这里沿用 getDescription()，
      * 并用抑制注解消除弃用警告（弃用但稳定的 API 比实验 API 更值得信赖）。
@@ -257,11 +285,21 @@ public final class WBDAddon extends JavaPlugin {
      * tacZApi 就一定可用；真正要判断的是 TacZ 运行时是否存活。
      */
     private void setupTacZ() {
-        RegisteredServiceProvider<TacZSpigotApi> rsp =
-                Bukkit.getServicesManager().getRegistration(TacZSpigotApi.class);
-        if (rsp != null) {
-            tacZApi = rsp.getProvider();
-            tacZAvailable = tacZApi.isAvailable();
+        // TacZSpigotBridge 是 softdepend：服务器没装它时，直接引用 TacZSpigotApi
+        // 会在方法链接阶段抛 NoClassDefFoundError，把整个 WBDAddon 拖垮。
+        // 这里用 Throwable 兜住，缺桥接时按“无 TacZ”降级。
+        try {
+            RegisteredServiceProvider<TacZSpigotApi> rsp =
+                    Bukkit.getServicesManager().getRegistration(TacZSpigotApi.class);
+            if (rsp != null) {
+                tacZApi = rsp.getProvider();
+                tacZAvailable = tacZApi.isAvailable();
+            }
+        } catch (Throwable t) {
+            tacZApi = null;
+            tacZAvailable = false;
+            getLogger().info("未检测到 TacZSpigotBridge，枪械相关功能将降级处理。");
+            return;
         }
 
         if (tacZAvailable) {

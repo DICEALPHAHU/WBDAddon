@@ -1,6 +1,6 @@
 # WBDAddon
 
-WarZBombDefuse 的第三方附加组件合集 —— 击杀报告 / 单人伤害统计 / 比赛状态显示 / 拆弹声音提示 / 竞技场饥饿锁定 / JourneyMap 队伍桥接。
+WarZBombDefuse 的第三方附加组件合集 —— 击杀报告 / 单人伤害统计 / 比赛状态显示 / 拆弹声音提示 / 竞技场饥饿锁定 / JourneyMap 队伍桥接 / 装备槽守卫 / 比赛投票。
 
 每个功能都是独立模块，通过 `config.yml` 单独开关，互不影响。无需改动 WBD 本体，纯附加。
 
@@ -26,6 +26,8 @@ WarZBombDefuse 的第三方附加组件合集 —— 击杀报告 / 单人伤害
 | 主菜单 | `menu` | `/wbda` 打开箱子菜单：模式选择（爆破/死斗）、匹配、当前比赛、比赛总结、个人资料；比赛历史（含每名玩家 K/D）落盘到 `menu-results.yml`，生涯数据在 `player-stats.yml` |
 | 回合结算展示 | `round-summary` | 回合结束标题显示胜方 + MVP，副标题随机挑一条本场趣闻（全歼用时 / 首杀 / 命中率 / 爆头等） |
 | JourneyMap 桥接 | `journeymap-bridge` | 同步 WBD 队伍数据到原版 Team，配合 JourneyMap Teams 队友可见、敌军隐藏、观战消失 |
+| 比赛投票 | `vote` | `/vyes` / `/vno` 表态，BossBar 实时显示事项与票数；`/unpause` 提前解除暂停、`/vkick` 踢人、`/vmap` 换图、`/vsdr` 投降 |
+| 装备槽守卫 | `loadout-guard` | 主武器 / 副武器 / 近战各限 1 把并锁定到 1/2/3 号格；投掷物最多 4 颗并锁定 4 号格；购买同类替换旧武器并退款；拾取同类必须先丢掉现有那把 |
 | 模式接入 API | — | 通过 `WbdAddonApi` 让第三方模式复用上面这些能力，不必各写一份 |
 
 ### 击杀报告（kill-reports）
@@ -53,6 +55,28 @@ WarZBombDefuse 的第三方附加组件合集 —— 击杀报告 / 单人伤害
 
 ### JourneyMap 桥接（journeymap-bridge）
 - 把 WBD 队伍数据写入原版 Scoreboard Team，配合客户端 JourneyMap Teams 实现队友可见、敌军隐藏、观战消失
+
+### 装备槽守卫（loadout-guard）
+- **主武器** 1 把 → 快捷栏第 1 格；**副武器（手枪）** 1 把 → 第 2 格；**近战武器** 1 把 → 第 3 格
+- **投掷物** 最多 4 颗 → 第 4 格放一堆，其余自动留在背包；第 5 颗起拒绝并退款
+- **购买同类不同武器**：旧武器按 WBD `shop.yml` 的售价退款，新武器替换进对应槽位
+- **购买同类同一把枪**：默认取消本次购买并退款，防止用「买同一把枪」免费补弹；可用 `same-gun-policy` 改成付费换新或替换退款
+- **拾取同类武器**：身上已经有一把时直接拦截，必须先丢掉现有那把才能捡新的
+- 分类来源：TacZSpigotBridge 的 `GunId` + TACZ index `type`；LRTactical 按材质；WBD 的 C4 / 拆弹器按 PDC 标记
+- 线上 8 把 Apex 刀在 TACZ index 里是 `sniper`，配置里已用 `gun-overrides` 覆盖成 `melee`
+- 不改 WBD 的 `shop.yml`，也不影响 `/wbd shopedit`；价格在打开商店时按文件修改时间自动刷新
+- 权限 `wbdaddon.loadout.bypass` 可绕过（默认 OP）
+- **需要 TacZSpigotBridge**：本模块的类直接引用桥接 API，缺桥接时会自动跳过（不会拖垮其他模块）
+
+### 比赛投票（vote）
+- **BossBar 实时计票**：发起后顶部显示 `投票 | 踢出 Steve | 同意 3 / 反对 0 | 剩余 21s`，通过/否决/超时后立刻收起
+- `/vyes` 同意、`/vno` 反对；够票立即通过，票数已经不可能达标就立即否决，不必等到超时
+- **`/unpause`**：技术暂停期间发起全场投票，T + CT **全员同意**才提前解除暂停
+- **`/vkick <队友>`**：同阵营投票踢人。被踢者**默认反对**（发起时就算进反对票，他不能给自己投同意），其余队友**全员同意**才生效；踢出后本场不能再加入（菜单与加入事件双重拦截），下一场自动解禁
+- **`/vmap <地图>`**：全场投票换图，**超过 2/3** 同意后提前结算本场比赛，3 秒后把场上所有人（含观战）搬到新地图并自动开新的一场
+- **`/vsdr`**：同阵营投票投降，**全队一致同意**后提前结束比赛，判对方阵营获胜
+- 提前结算走 WBD 自己的 `endMatch`，不会多算一分、不会打乱比分，照常广播胜方与整场总结
+- 同一房间同时只允许一个投票；同一类投票结束有冷却（默认 15 秒），防止连着刷
 
 ## 致谢
 
@@ -164,6 +188,36 @@ modules:
     enabled: true
     sync-interval-ticks: 20         # 同步间隔
     team-prefix: "wbd_"             # 原版队伍名前缀
+  loadout-guard:
+    enabled: true
+    lock-interval-ticks: 10         # 槽位锁定兜底检查间隔
+    slots:                          # 0-8 为快捷栏；四项必须互不相同
+      primary: 0
+      secondary: 1
+      melee: 2
+      throwable: 3
+    limits:
+      primary: 1                    # 固定 1，改大也不会放宽
+      secondary: 1                  # 固定 1
+      melee: 1                      # 固定 1
+      throwable: 4                  # 总颗数；0 = 关闭上限
+    same-gun-policy: block          # block / replace-no-refund / replace-refund
+    refund-old-weapon: true         # 替换不同武器时退旧武器商店价
+    drop-duplicates: true           # 多出的同类丢到脚下
+    gun-overrides:                  # 8 把 Apex 刀在 TACZ index 里是 sniper
+      "twx:twx_kw": melee
+      "twx:twx_nbejd": melee
+      "twx:twx_hdd": melee
+      "twx:twx_sc": melee
+      "twx:twx_nlj": melee
+      "twx:twx_mqzz": melee
+      "twx:twx_xsd": melee
+      "twx:twx_mk": melee
+  vote:
+    enabled: true
+    duration-seconds: 30            # 一次投票持续多久
+    cooldown-seconds: 15            # 同类投票结束后的冷却
+    include-spectators: false       # 全场投票是否算上观战者
 ```
 
 执行 `/wbdaddon reload` 即可生效，无需重启。

@@ -112,6 +112,19 @@ public final class ShopPriceCache {
         return 0;
     }
 
+    /**
+     * 只查 GunId 对应的价格，不做材质/显示名回退。
+     *
+     * <p>给“替换旧武器退款”用：所有 TACZ 枪共用
+     * {@code TACZ_MODERN_KINETIC_GUN} 材质，如果 GunId 不在商店里却回退材质，
+     * 会把第一把枪的价格套到一把根本没在商店卖过的枪上。查不到返回 -1。
+     */
+    public int gunPriceOf(String gunId) {
+        if (gunId == null) return -1;
+        Integer price = gunPrices.get(gunId);
+        return price == null ? -1 : price;
+    }
+
     public int gunCount() {
         return gunPrices.size();
     }

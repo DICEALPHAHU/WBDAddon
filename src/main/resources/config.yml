@@ -384,6 +384,33 @@ modules:
 
     debug: false
 
+  # ----------------------------------------------------------
+  # 比赛投票
+  # 功能：/vyes 同意、/vno 反对，投票期间顶部 BossBar 实时显示
+  #       投票事项、双方票数与剩余时间，投票结束立刻收起。
+  #
+  #   /unpause          暂停期间全场投票提前解除暂停（全员同意）
+  #   /vkick <队友>      同阵营投票踢人（被踢者默认反对，其余队友全员同意）
+  #   /vmap <地图>       全场投票换图（超过 2/3 同意，提前结算并搬到新地图重开）
+  #   /vsdr             同阵营投票投降（全员同意，判对方阵营获胜）
+  # ----------------------------------------------------------
+  vote:
+    enabled: true
+
+    # 一次投票持续多久（秒）。到时还没投的票按「未同意」处理。
+    duration-seconds: 30
+
+    # 同一房间同一类投票结束后的冷却（秒），防止连着刷。
+    # 设为 0 关闭冷却。
+    cooldown-seconds: 15
+
+    # 全局投票（/unpause、/vmap）是否把观战者也算进票池。
+    # false 时只有 T / CT 有资格投——观战者既帮不上忙，也不该左右别人的比赛。
+    include-spectators: false
+
+    # 排查用：在控制台输出发起 / 通过 / 否决 / 取消的日志
+    debug: false
+
   journeymap-bridge:
     enabled: true
 
@@ -396,3 +423,117 @@ modules:
     # 挤进同一个原版队伍，在 JourneyMap 上互相看得见。
     # 名字会被裁剪到原版 16 字符上限以内，所以前缀不宜过长。
     team-prefix: "wbd_"
+
+  # ----------------------------------------------------------
+  # 装备槽守卫
+  # 功能：
+  #   - 主武器只能 1 把，固定快捷栏第 1 格
+  #   - 副武器（手枪）只能 1 把，固定第 2 格
+  #   - 近战武器只能 1 把，固定第 3 格
+  #   - 投掷物最多 4 颗，第 4 格放一堆，其余进背包
+  #   - 购买同类武器时替换旧武器，并退还旧武器的商店售价
+  #   - 拾取同类武器时，必须先丢掉身上现有那把
+  #
+  # 说明：
+  #   1. 这里不修改 WBD 的 shop.yml；价格从 WBD 已加载的 shop.yml 读取。
+  #   2. TACZ 枪械按 TacZSpigotBridge 的 GunId + index type 分类。
+  #   3. 线上那 8 把 Apex 刀在 TACZ index 里是 sniper，必须在 gun-overrides
+  #      里覆盖成 melee，否则会被当成主武器。
+  # ----------------------------------------------------------
+  loadout-guard:
+    enabled: true
+
+    # 槽位锁定检查间隔（tick）。20 = 1 秒。
+    # 事件发生时也会立即归位，这个定时任务只是兜底。
+    lock-interval-ticks: 10
+
+    # 槽位（0-8 为快捷栏）。四个槽位必须互不相同。
+    # 注意不要和 WBD 的 c4-slot（默认 4）或商店开启物品槽位（默认 8）冲突。
+    slots:
+      primary: 0
+      secondary: 1
+      melee: 2
+      throwable: 3
+
+    # 每类最多携带数量。
+    # 主武器 / 副武器 / 近战固定各 1 把，下面三项只用于可读性，改大也不会放宽。
+    # 投掷物按总颗数计算（不是按堆叠数）；设为 0 会关闭投掷物上限。
+    limits:
+      primary: 1
+      secondary: 1
+      melee: 1
+      throwable: 4
+
+    # 购买“同类、同一把枪”时怎么处理：
+    #   block             = 取消本次购买并退还本次购买的钱（推荐，防止免费补弹）
+    #   replace-no-refund = 用新枪替换旧枪，不退旧枪的钱（相当于付费换新）
+    #   replace-refund    = 用新枪替换旧枪，并退旧枪的钱（可能被用来免费补弹）
+    same-gun-policy: block
+
+    # 购买“同类、不同枪”时，是否退还旧武器的商店售价。
+    # 旧武器价格从 WBD 的 shop.yml 读取；查不到价格时按 0 处理。
+    refund-old-weapon: true
+
+    # 发现同类武器多把（管理员 /give、旧数据、插件冲突）时，
+    # 是否把多出来的丢到玩家脚下。false = 保留现场，不删也不丢。
+    drop-duplicates: true
+
+    # 排查用：输出分类、替换、退款、归位日志。
+    debug: false
+
+    # TACZ 枪械类型 -> 类别。
+    # TACZ index 里 type 常见值：pistol / rifle / smg / shotgun / sniper / mg / rpg。
+    # 没写的类型默认按 primary 处理，并在控制台提示一次。
+    tacz-type-categories:
+      pistol: secondary
+      rifle: primary
+      smg: primary
+      shotgun: primary
+      sniper: primary
+      mg: primary
+      rpg: primary
+      melee: melee
+
+    # 单把枪的类别覆盖，优先级高于 tacz-type-categories。
+    # 这 8 把是 Apex 近战刀：TACZ index 里被标成 sniper，必须覆盖成 melee。
+    gun-overrides:
+      "twx:twx_kw": melee
+      "twx:twx_nbejd": melee
+      "twx:twx_hdd": melee
+      "twx:twx_sc": melee
+      "twx:twx_nlj": melee
+      "twx:twx_mqzz": melee
+      "twx:twx_xsd": melee
+      "twx:twx_mk": melee
+
+    # 材质 -> 类别。按 Bukkit Material 名称填写；
+    # 当前服务端不存在的材质会被忽略。
+    throwable-materials:
+      - LRTACTICAL_THROWABLE
+    melee-materials:
+      - LRTACTICAL_MELEE
+    utility-materials:
+      - LRTACTICAL_CONSUMABLE
+      - TACZ_ATTACHMENT
+      - TACZ_AMMO
+      - SHEARS
+      - POTION
+
+    # TACZ 枪械物品的 Bukkit Material 名称。
+    # 只有这个材质的物品才会去问 TacZSpigotBridge 要 GunId。
+    tacz-gun-material: TACZ_MODERN_KINETIC_GUN
+
+    # 提示文案。%category% 是“主武器/副武器/近战武器/投掷物”，
+    # %old%/%new% 是物品名，%refund%/%price% 是金额。
+    messages:
+      replaced: "&a已替换 %old% &7→ &a%new%&7，退还 &e$%refund%"
+      replaced-no-refund: "&a已替换 %old% &7→ &a%new%&7（旧武器无商店售价）"
+      same-gun-blocked: "&c你已装备 %gun%&c，本次购买已取消并退还 &e$%price%"
+      same-gun-blocked-free: "&c你已装备 %gun%&c，本次购买已取消。"
+      purchase-missing: "&c购买的物品没有进入背包（可能背包已满），已退还 &e$%price%"
+      throwable-full: "&c投掷物最多携带 %limit% 颗，超出部分已退还 &e$%refund%"
+      throwable-full-no-refund: "&c投掷物最多携带 %limit% 颗，超出部分已移除。"
+      throwable-excess: "&c投掷物超过上限 %limit% 颗，多出的 %amount% 颗已丢到脚下。"
+      throwable-pickup-blocked: "&c你最多携带 %limit% 颗投掷物。"
+      pickup-blocked: "&c你已装备%category%，需要先丢弃当前这把才能拾取。"
+      duplicate-dropped: "&7检测到多出的%category% &f%item%&7，已丢到脚下。"
