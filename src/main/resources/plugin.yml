@@ -64,4 +64,5 @@ permissions:
     default: op
   wbdaddon.loadout.bypass:
     description: 绕过装备槽守卫（不限主/副/近战/投掷物，不强制归位）
-    default: op
+    # 默认不授予：以前默认给 OP，结果管理员自己测试时看不到效果
+    default: false

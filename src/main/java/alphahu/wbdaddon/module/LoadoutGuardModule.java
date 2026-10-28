@@ -2136,7 +2136,13 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
 
     private boolean isManaged(Player player) {
         if (player == null || !player.isOnline()) return false;
-        if (player.hasPermission(BYPASS_PERMISSION)) return false;
+        if (player.hasPermission(BYPASS_PERMISSION)) {
+            if (debug) {
+                plugin.getLogger().info("[loadout] " + player.getName()
+                        + " 拥有 " + BYPASS_PERMISSION + "，跳过装备槽管理");
+            }
+            return false;
+        }
 
         ArenaSession session = session(player);
         if (session == null) return false;
