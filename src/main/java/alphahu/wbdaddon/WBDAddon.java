@@ -6,6 +6,7 @@ import alphahu.wbdaddon.command.PauseCommand;
 import alphahu.wbdaddon.command.VoteCommand;
 import alphahu.wbdaddon.command.WBDAddonCommand;
 import alphahu.wbdaddon.mode.ModeRegistry;
+import alphahu.wbdaddon.util.WeaponNames;
 import alphahu.wbdaddon.module.ArenaDropsModule;
 import alphahu.wbdaddon.module.ArenaEffectsModule;
 import alphahu.wbdaddon.module.ArenaHungerModule;
@@ -132,6 +133,10 @@ public final class WBDAddon extends JavaPlugin {
         // 3. 尝试接入 TacZSpigotBridge（可选依赖）
         setupTacZ();
 
+        // 3.5 武器名转换表：不配就用自动转换的 GunId，配了按表显示
+        WeaponNames.load(new java.io.File(getDataFolder(), "weapon-names.yml"),
+                getLogger(), tacZApi);
+
         // 4. 注册模块
         this.moduleManager = new ModuleManager(this);
         moduleManager.register(new KillReportsModule(this));
@@ -214,6 +219,7 @@ public final class WBDAddon extends JavaPlugin {
         }
 
         modeRegistry = null;
+        WeaponNames.clear();
         getLogger().info("WBDAddon 已卸载。");
     }
 
@@ -231,6 +237,8 @@ public final class WBDAddon extends JavaPlugin {
      */
     public void reload() {
         reloadConfig();
+        WeaponNames.load(new java.io.File(getDataFolder(), "weapon-names.yml"),
+                getLogger(), tacZApi);
         this.reloading = true;
         try {
             moduleManager.disableAll();
