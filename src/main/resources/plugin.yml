@@ -29,6 +29,9 @@ commands:
     description: 请求技术暂停（每队每场限次）
     usage: /pause
     aliases: [timeout]
+  spectate:
+    description: 观战队友第一视角（阵亡后可用）
+    usage: /spectate [玩家|off]
   wbda:
     description: 打开 WBD 主菜单
     usage: /wbda

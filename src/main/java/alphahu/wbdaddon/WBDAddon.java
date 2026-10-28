@@ -3,6 +3,7 @@ package alphahu.wbdaddon;
 import alphahu.wbdaddon.api.WbdAddonApi;
 import alphahu.wbdaddon.command.MenuCommand;
 import alphahu.wbdaddon.command.PauseCommand;
+import alphahu.wbdaddon.command.SpectateCommand;
 import alphahu.wbdaddon.command.VoteCommand;
 import alphahu.wbdaddon.command.WBDAddonCommand;
 import alphahu.wbdaddon.mode.ModeRegistry;
@@ -19,6 +20,7 @@ import alphahu.wbdaddon.module.MatchStatusModule;
 import alphahu.wbdaddon.module.MenuModule;
 import alphahu.wbdaddon.module.ModuleManager;
 import alphahu.wbdaddon.module.NameTagModule;
+import alphahu.wbdaddon.module.SpectateCameraModule;
 import alphahu.wbdaddon.module.PositionBackupModule;
 import alphahu.wbdaddon.module.ReconnectModule;
 import alphahu.wbdaddon.module.RoundEventsModule;
@@ -160,6 +162,7 @@ public final class WBDAddon extends JavaPlugin {
         moduleManager.register(new ReconnectModule(this));
         moduleManager.register(new ShortHandedCompensationModule(this));
         moduleManager.register(new NameTagModule(this));
+        moduleManager.register(new SpectateCameraModule(this));
         moduleManager.register(new JourneyMapModule(this));
         // 队友轮廓发光依赖 ProtocolLib 的逐人发包能力，没装就不注册（直接 new 会触发类加载报错）
         try {
@@ -194,6 +197,14 @@ public final class WBDAddon extends JavaPlugin {
         var pauseCmd = getCommand("pause");
         if (pauseCmd != null) {
             pauseCmd.setExecutor(new PauseCommand(this));
+        }
+
+        // 观战第一视角 /spectate
+        var spectateCmd = getCommand("spectate");
+        if (spectateCmd != null) {
+            SpectateCommand spectateExecutor = new SpectateCommand(this);
+            spectateCmd.setExecutor(spectateExecutor);
+            spectateCmd.setTabCompleter(spectateExecutor);
         }
 
         // 主菜单 /wbda
