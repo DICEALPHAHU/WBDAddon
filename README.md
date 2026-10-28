@@ -67,7 +67,7 @@ WarZBombDefuse 的第三方附加组件合集 —— 击杀报告 / 单人伤害
 - 线上 8 把 Apex 刀在 TACZ index 里是 `sniper`，配置里已用 `gun-overrides` 覆盖成 `melee`
 - 不改 WBD 的 `shop.yml`，也不影响 `/wbd shopedit`；价格在打开商店时按文件修改时间自动刷新
 - **绿宝石保护**：商店开物品不能丢弃、不能换到副手，被拖走/顶掉/清掉后自动放回固定槽位
-- **组合键开商店**：默认「潜行 + F」（`sneak-swap-hands`），也可以换成单按 F、连按两下 Shift，或关掉；绿宝石右键照旧
+- **连按开商店**：默认 450ms 内连按两下 F（`double-swap`），单按 F 仍是原版换手；也可换成单按 F、连按两下 Shift，或关掉。`sneak-swap-hands`（Shift+F）留给 `/wbda` 菜单用
 - **购买兜底**：WBD 发物品不看「发不出去」——背包 36 格全满时 `addItem` 的剩余堆叠被直接丢弃，配了 `give-slot` 的商品还会 `setItem` 顶掉那一格，两种情况钱都照扣。本模块在扣钱瞬间抓一份背包快照，事后核对：东西没到手就按比例退款，落点格被顶掉就把旧物品还回去（放不下丢脚下）
 - 权限 `wbdaddon.loadout.bypass` 可绕过（默认 OP）
 - **需要 TacZSpigotBridge**：本模块的类直接引用桥接 API，缺桥接时会自动跳过（不会拖垮其他模块）

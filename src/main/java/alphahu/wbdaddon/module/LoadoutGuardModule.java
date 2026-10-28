@@ -144,10 +144,13 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
     private boolean dropDuplicates = true;
     private boolean purchaseSafety = true;
     private boolean protectOpenItem = true;
-    private OpenKey openKey = OpenKey.SNEAK_SWAP_HANDS;
+    private OpenKey openKey = OpenKey.DOUBLE_SWAP;
 
     /** 双击潜行的上一次时间，key = 玩家 UUID。 */
     private final Map<UUID, Long> lastSneak = new ConcurrentHashMap<>();
+
+    /** 双击「交换副手」的上一次时间，key = 玩家 UUID。 */
+    private final Map<UUID, Long> lastSwap = new ConcurrentHashMap<>();
     private boolean debug = false;
     private SameGunPolicy sameGunPolicy = SameGunPolicy.BLOCK;
     private long lockIntervalTicks = 10L;
@@ -263,6 +266,7 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
         messageCooldown.clear();
         gunCategoryCache.clear();
         lastSneak.clear();
+        lastSwap.clear();
         plugin.getLogger().info("装备槽守卫已卸载。");
     }
 
@@ -299,7 +303,7 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
         this.dropDuplicates = plugin.getConfig().getBoolean(base + "drop-duplicates", true);
         this.purchaseSafety = plugin.getConfig().getBoolean(base + "purchase-safety", true);
         this.protectOpenItem = plugin.getConfig().getBoolean(base + "protect-open-item", true);
-        this.openKey = OpenKey.parse(plugin.getConfig().getString(base + "open-key", "sneak-swap-hands"));
+        this.openKey = OpenKey.parse(plugin.getConfig().getString(base + "open-key", "double-swap"));
         this.debug = plugin.getConfig().getBoolean(base + "debug", false);
         this.lockIntervalTicks = Math.max(1L,
                 plugin.getConfig().getLong(base + "lock-interval-ticks", 10L));
@@ -1473,6 +1477,13 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
     public void onSwapHands(PlayerSwapHandItemsEvent event) {
         Player player = event.getPlayer();
 
+        // 快捷键优先：双击 F（Shift + F 预留给 /wbda 菜单，这里不碰）
+        if (openKey == OpenKey.DOUBLE_SWAP && doubleTapped(player)
+                && openShopByKey(player)) {
+            event.setCancelled(true);
+            return;
+        }
+
         // 绿宝石换到副手 = 把它藏起来，直接拦
         if (protectOpenItem
                 && (isOpenItem(event.getMainHandItem()) || isOpenItem(event.getOffHandItem()))) {
@@ -1480,8 +1491,6 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
             return;
         }
 
-        // 商店快捷键：服务端能识别的“按键”只有交换副手这一颗，
-        // 所以用「潜行 + 换手」这种组合来避免误触
         boolean bySwapKey = switch (openKey) {
             case SWAP_HANDS -> true;
             case SNEAK_SWAP_HANDS -> player.isSneaking();
@@ -1495,6 +1504,18 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
         if (isManaged(player)) {
             scheduleNormalize(player);
         }
+    }
+
+    /**
+     * 450ms 内又按了一次「交换副手」。
+     *
+     * <p>单按仍然是原版换手，只有连按两下才当快捷键——F 本身平时很少按，
+     * 比连按 Shift 那种“蹲走时手滑两下”可靠得多。
+     */
+    private boolean doubleTapped(Player player) {
+        long now = System.currentTimeMillis();
+        Long last = lastSwap.put(player.getUniqueId(), now);
+        return last != null && now - last <= 450L;
     }
 
     /** 双击潜行（Shift）开商店。 */
@@ -1592,6 +1613,7 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
         lastSpend.remove(uuid);
         preGive.remove(uuid);
         lastSneak.remove(uuid);
+        lastSwap.remove(uuid);
         scheduledNormalize.remove(uuid);
         messageCooldown.keySet().removeIf(key -> key.startsWith(uuid + ":"));
     }
@@ -1698,6 +1720,8 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
         SWAP_HANDS,
         /** 连按两下潜行（Shift）。 */
         DOUBLE_SNEAK,
+        /** 连按两下交换副手（F）。 */
+        DOUBLE_SWAP,
         /** 关掉按键，只用绿宝石右键 / /wbd buy。 */
         OFF;
 
@@ -1706,6 +1730,7 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
             return switch (raw.trim().toLowerCase(Locale.ROOT)) {
                 case "swap-hands", "swap", "f" -> SWAP_HANDS;
                 case "double-sneak", "sneak2", "double-shift" -> DOUBLE_SNEAK;
+                case "double-swap", "swap2", "double-f" -> DOUBLE_SWAP;
                 case "off", "none", "disabled", "false" -> OFF;
                 default -> SNEAK_SWAP_HANDS;
             };
