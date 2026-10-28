@@ -48,6 +48,7 @@ import org.bukkit.scheduler.BukkitTask;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -154,6 +155,9 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
     /** 物品分类标签的键（PDC）：primary / secondary / melee / throwable / utility。 */
     private final NamespacedKey tagKey;
 
+    /** 每个类别是否启用（item-categories.yml 的 categories.*.enabled）。 */
+    private final Map<Category, Boolean> enabledCategories = new EnumMap<>(Category.class);
+
     /** item-categories.yml：服主可编辑的分类对照表（优先级最高）。 */
     private final Map<String, Category> tableGuns = new HashMap<>();
     private final Map<String, Category> tableNames = new HashMap<>();
@@ -257,11 +261,21 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
             plugin.getLogger().warning("装备槽守卫：初始化购买计数快照失败，"
                     + "首次购买可能被跳过：" + t);
         }
-        plugin.getLogger().info("装备槽守卫已启动：主武器→第 " + (primarySlot + 1)
-                + " 格，副武器→第 " + (secondarySlot + 1)
-                + " 格，近战→第 " + (meleeSlot + 1)
-                + " 格，投掷物→第 " + (throwableSlot + 1)
-                + " 格（上限 " + (throwableLimit <= 0 ? "不限" : throwableLimit + " 颗") + "）。");
+        plugin.getLogger().info("装备槽守卫已启动：" + slotSummary()
+                + "（投掷物上限 " + (throwableLimit <= 0 ? "不限" : throwableLimit + " 颗") + "）。");
+        if (!enabledCategories.isEmpty()) {
+            StringBuilder off = new StringBuilder();
+            for (Map.Entry<Category, Boolean> entry : enabledCategories.entrySet()) {
+                if (!entry.getValue()) {
+                    if (off.length() > 0) off.append("、");
+                    off.append(entry.getKey().displayName);
+                }
+            }
+            if (off.length() > 0) {
+                plugin.getLogger().info("装备槽守卫：已关闭的类别 → " + off
+                        + "（不锁格子、不限购、不拦截拾取）。");
+            }
+        }
         if (plugin.getTacZApi() == null) {
             plugin.getLogger().warning("装备槽守卫：TacZSpigotBridge 不可用，"
                     + "TACZ 枪械将无法分类（手枪/步枪都不会被限购）。");
@@ -340,6 +354,22 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
         loadMaterials(base);
     }
 
+    /** 启动日志用的一句话槽位摘要，关掉的类别直接标出来。 */
+    private String slotSummary() {
+        StringBuilder sb = new StringBuilder();
+        appendSlotSummary(sb, Category.PRIMARY, primarySlot);
+        appendSlotSummary(sb, Category.SECONDARY, secondarySlot);
+        appendSlotSummary(sb, Category.MELEE, meleeSlot);
+        appendSlotSummary(sb, Category.THROWABLE, throwableSlot);
+        return sb.toString();
+    }
+
+    private void appendSlotSummary(StringBuilder sb, Category category, int slot) {
+        if (sb.length() > 0) sb.append("，");
+        sb.append(category.displayName).append("→第 ").append(slot + 1).append(" 格");
+        if (!enabled(category)) sb.append("（已关闭）");
+    }
+
     private boolean validSlots() {
         int[] slots = {primarySlot, secondarySlot, meleeSlot, throwableSlot};
         Set<Integer> seen = new HashSet<>();
@@ -372,6 +402,10 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
             readCategorySection(yaml, "names", tableNames);
             readCategorySection(yaml, "materials", tableMaterials);
             readCategorySection(yaml, "types", tableTypes);
+            if (!yaml.isConfigurationSection("categories")) {
+                appendCategoryRuleBlock(file);
+            }
+            loadCategoryRules(yaml);
             plugin.getLogger().info("装备分类对照表已载入：枪械 " + tableGuns.size()
                     + " / 名称 " + tableNames.size()
                     + " / 材质 " + tableMaterials.size()
@@ -383,6 +417,108 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
             tableTypes.clear();
             plugin.getLogger().warning("载入 item-categories.yml 失败，退回 config.yml 的分类规则：" + t);
         }
+    }
+
+    /**
+     * 读取 `categories:` —— 每个类别是否启用、占哪一格、上限多少。
+     *
+     * <p>没写的字段沿用 config.yml 里的 `slots` / `limits`，所以老配置照样能用。
+     */
+    private void loadCategoryRules(YamlConfiguration yaml) {
+        enabledCategories.clear();
+        for (Category category : new Category[]{Category.PRIMARY, Category.SECONDARY,
+                Category.MELEE, Category.THROWABLE}) {
+            enabledCategories.put(category, true);
+        }
+
+        ConfigurationSection root = yaml.getConfigurationSection("categories");
+        if (root == null) return;
+
+        applyCategoryRule(root, "primary", Category.PRIMARY);
+        applyCategoryRule(root, "secondary", Category.SECONDARY);
+        applyCategoryRule(root, "melee", Category.MELEE);
+        applyCategoryRule(root, "throwable", Category.THROWABLE);
+
+        if (!validSlots()) {
+            plugin.getLogger().warning("item-categories.yml 的 categories.*.slot 有重复或越界，"
+                    + "已回退到 config.yml 的 slots 配置。");
+            String base = "modules.loadout-guard.";
+            this.primarySlot = plugin.getConfig().getInt(base + "slots.primary", 0);
+            this.secondarySlot = plugin.getConfig().getInt(base + "slots.secondary", 1);
+            this.meleeSlot = plugin.getConfig().getInt(base + "slots.melee", 2);
+            this.throwableSlot = plugin.getConfig().getInt(base + "slots.throwable", 3);
+        }
+    }
+
+    private void applyCategoryRule(ConfigurationSection root, String key, Category category) {
+        ConfigurationSection section = root.getConfigurationSection(key);
+        if (section == null) return;
+
+        if (section.isSet("enabled")) {
+            enabledCategories.put(category, section.getBoolean("enabled", true));
+        }
+        if (section.isSet("slot")) {
+            int slot = section.getInt("slot", -1);
+            if (slot >= 0 && slot <= 8) {
+                switch (category) {
+                    case PRIMARY -> primarySlot = slot;
+                    case SECONDARY -> secondarySlot = slot;
+                    case MELEE -> meleeSlot = slot;
+                    case THROWABLE -> throwableSlot = slot;
+                    default -> {
+                    }
+                }
+            } else {
+                plugin.getLogger().warning("item-categories.yml 里 categories." + key
+                        + ".slot 必须是 0-8，已忽略。");
+            }
+        }
+        if (section.isSet("limit")) {
+            int limit = Math.max(0, section.getInt("limit", 1));
+            switch (category) {
+                case PRIMARY -> primaryLimit = limit;
+                case SECONDARY -> secondaryLimit = limit;
+                case MELEE -> meleeLimit = limit;
+                case THROWABLE -> throwableLimit = limit;
+                default -> {
+                }
+            }
+        }
+    }
+
+    /** 老文件没有 categories: 段落时补一段默认值，方便服主直接改。 */
+    private void appendCategoryRuleBlock(File file) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("\n");
+        sb.append("# ============================================================\n");
+        sb.append("# 各类别开关与落点\n");
+        sb.append("#\n");
+        sb.append("# enabled=false 表示这个类别完全不管理：不锁格子、不限购、不拦截拾取。\n");
+        sb.append("# slot 是落点（0-8 为快捷栏，四项必须互不相同，也不要和 WBD 的 c4-slot 撞车）。\n");
+        sb.append("# limit 只对 throwable 有意义（投掷物总颗数，0 = 不限）；\n");
+        sb.append("#       主/副/近战固定各 1 把，写大了也不会放宽。\n");
+        sb.append("# 不写或删掉这一段，就沿用 config.yml 里的 slots / limits。\n");
+        sb.append("# ============================================================\n");
+        sb.append("categories:\n");
+        sb.append("  primary:\n    enabled: true\n    slot: ").append(primarySlot).append("\n");
+        sb.append("  secondary:\n    enabled: true\n    slot: ").append(secondarySlot).append("\n");
+        sb.append("  melee:\n    enabled: true\n    slot: ").append(meleeSlot).append("\n");
+        sb.append("  throwable:\n    enabled: true\n    slot: ").append(throwableSlot)
+                .append("\n    limit: ").append(Math.max(0, throwableLimit)).append("\n");
+
+        try {
+            java.nio.file.Files.writeString(file.toPath(), sb.toString(),
+                    java.nio.charset.StandardCharsets.UTF_8,
+                    java.nio.file.StandardOpenOption.APPEND);
+            plugin.getLogger().info("已为 item-categories.yml 补上 categories 段落（类别开关与落点）。");
+        } catch (Throwable t) {
+            plugin.getLogger().warning("追加 categories 段落失败：" + t.getMessage());
+        }
+    }
+
+    /** 该类别是否启用。 */
+    private boolean enabled(Category category) {
+        return enabledCategories.getOrDefault(category, Boolean.TRUE);
     }
 
     private void readCategorySection(YamlConfiguration yaml, String section,
@@ -414,6 +550,19 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
         sb.append("# 这张表优先级最高：写了就按表走，没写的才按物品标签 / TacZ 类型 / 材质推断。\n");
         sb.append("# 改完执行 /wbdaddon reload 生效。\n");
         sb.append("# ============================================================\n");
+        sb.append("\n");
+        sb.append("# ============================================================\n");
+        sb.append("# 各类别开关与落点\n");
+        sb.append("#   enabled=false 表示这个类别完全不管理：不锁格子、不限购、不拦截拾取\n");
+        sb.append("#   slot 是落点（0-8 为快捷栏，四项必须互不相同，别和 WBD 的 c4-slot 撞车）\n");
+        sb.append("#   limit 只对 throwable 有意义（0 = 不限）\n");
+        sb.append("# ============================================================\n");
+        sb.append("categories:\n");
+        sb.append("  primary:\n    enabled: true\n    slot: ").append(primarySlot).append("\n");
+        sb.append("  secondary:\n    enabled: true\n    slot: ").append(secondarySlot).append("\n");
+        sb.append("  melee:\n    enabled: true\n    slot: ").append(meleeSlot).append("\n");
+        sb.append("  throwable:\n    enabled: true\n    slot: ").append(throwableSlot)
+                .append("\n    limit: ").append(Math.max(0, throwableLimit)).append("\n");
         sb.append("\n");
         sb.append("# 按 TacZ GunId 指定（大小写不敏感，可省略命名空间 tacz:）\n");
         sb.append("guns:\n");
@@ -924,10 +1073,18 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
             return;
         }
         PlayerInventory inventory = player.getInventory();
-        normalizeCategory(player, inventory, Category.PRIMARY, primarySlot);
-        normalizeCategory(player, inventory, Category.SECONDARY, secondarySlot);
-        normalizeCategory(player, inventory, Category.MELEE, meleeSlot);
-        normalizeThrowables(player, inventory);
+        if (enabled(Category.PRIMARY)) {
+            normalizeCategory(player, inventory, Category.PRIMARY, primarySlot);
+        }
+        if (enabled(Category.SECONDARY)) {
+            normalizeCategory(player, inventory, Category.SECONDARY, secondarySlot);
+        }
+        if (enabled(Category.MELEE)) {
+            normalizeCategory(player, inventory, Category.MELEE, meleeSlot);
+        }
+        if (enabled(Category.THROWABLE)) {
+            normalizeThrowables(player, inventory);
+        }
         ensureOpenItem(player);
     }
 
@@ -1369,6 +1526,10 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
 
     private void handlePurchase(Player player, ArenaSession session, ShopItem shopItem,
                                 ItemStack give, Category category) {
+        if (!enabled(category)) {
+            // 这个类别被关掉了：不替换、不退款、不归位，交还给 WBD 原生行为
+            return;
+        }
         switch (category) {
             case PRIMARY, SECONDARY, MELEE ->
                     handleWeaponPurchase(player, session, shopItem, give, category);
@@ -1665,6 +1826,10 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
         if (item == null || item.getType().isAir()) return;
 
         Category category = classify(item);
+        if (category != Category.UTILITY && category != Category.NONE && !enabled(category)) {
+            scheduleNormalize(player);
+            return;
+        }
         switch (category) {
             case PRIMARY, SECONDARY, MELEE -> {
                 if (!find(player, category).isEmpty()) {
