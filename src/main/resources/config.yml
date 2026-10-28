@@ -403,8 +403,14 @@ modules:
     # 检查间隔（tick）。20 = 1 秒；目标死亡/退场后最迟这么久会换人
     interval-ticks: 20
 
-    # 顶部显示：正在观战谁、他的血量、手里的武器
+    # 顶部「战地记录仪」BossBar：标题显示观战对象与他的武器，进度条是他的血量比例
     hud: true
+
+    # BossBar 标题。占位符：%player% 观战对象，%weapon% 他手里的武器
+    bar-title: "&6战地记录仪 &8| &7观战 &f%player% &8| &e%weapon%"
+
+    # BossBar 颜色：PINK / BLUE / RED / GREEN / YELLOW / PURPLE / WHITE
+    bar-color: YELLOW
 
     # 鼠标左键 / 右键切换上一个 / 下一个队友（仅阵亡观战时生效）
     key-switch: true

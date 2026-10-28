@@ -4,7 +4,6 @@ import alphahu.wbdaddon.WBDAddon;
 import alphahu.wbdaddon.api.AddonMode;
 import com.warz.bombdefuse.api.WbdPlayerEliminatedEvent;
 import com.warz.bombdefuse.arena.ArenaSession;
-import com.warz.bombdefuse.util.ActionBars;
 import com.warz.bombdefuse.arena.PlayerRecord;
 import org.bukkit.Bukkit;
 import org.bukkit.GameMode;
@@ -59,6 +58,9 @@ public class SpectateCameraModule implements AddonModule, Listener {
     /** 左/右键切换的防抖。 */
     private final Map<UUID, Long> lastSwitch = new ConcurrentHashMap<>();
 
+    /** 观战者 -> 顶部「战地记录仪」BossBar。 */
+    private final Map<UUID, org.bukkit.boss.BossBar> bars = new ConcurrentHashMap<>();
+
     private BukkitTask task;
     private long intervalTicks;
     private boolean auto;
@@ -66,6 +68,8 @@ public class SpectateCameraModule implements AddonModule, Listener {
     private boolean hud;
     private boolean keySwitch;
     private boolean deathCamera;
+    private String barTitle;
+    private org.bukkit.boss.BarColor barColor;
 
     public SpectateCameraModule(WBDAddon plugin) {
         this.plugin = plugin;
@@ -94,6 +98,10 @@ public class SpectateCameraModule implements AddonModule, Listener {
         this.onlyTeammates = plugin.getConfig()
                 .getBoolean("modules.spectate-camera.only-teammates", true);
         this.hud = plugin.getConfig().getBoolean("modules.spectate-camera.hud", true);
+        this.barTitle = plugin.getConfig().getString("modules.spectate-camera.bar-title",
+                "&6战地记录仪 &8| &7观战 &f%player% &8| &e%weapon%");
+        this.barColor = parseColor(plugin.getConfig()
+                .getString("modules.spectate-camera.bar-color", "YELLOW"));
         this.keySwitch = plugin.getConfig().getBoolean("modules.spectate-camera.key-switch", true);
         this.deathCamera = plugin.getConfig()
                 .getBoolean("modules.spectate-camera.death-camera", true);
@@ -114,6 +122,10 @@ public class SpectateCameraModule implements AddonModule, Listener {
         lastDeath.clear();
         wipeTeleported.clear();
         lastSwitch.clear();
+        for (Player viewer : Bukkit.getOnlinePlayers()) {
+            hideBar(viewer);
+        }
+        bars.clear();
         HandlerList.unregisterAll(this);
         plugin.getLogger().info("观战第一视角已卸载。");
     }
@@ -127,11 +139,13 @@ public class SpectateCameraModule implements AddonModule, Listener {
         for (Player player : Bukkit.getOnlinePlayers()) {
             if (player.getGameMode() != GameMode.SPECTATOR) {
                 attached.remove(player.getUniqueId());
+                hideBar(player);
                 continue;
             }
             AddonMode mode = plugin.getApi().getModeFor(player);
             if (mode == null || mode.isAlive(player)) {
                 attached.remove(player.getUniqueId());
+                hideBar(player);
                 continue;
             }
 
@@ -197,8 +211,18 @@ public class SpectateCameraModule implements AddonModule, Listener {
         event.setCancelled(true);
     }
 
+    /**
+     * 更新观战者的顶部「战地记录仪」。
+     *
+     * <p>用 BossBar 而不是 ActionBar：观战时屏幕上方一直挂着一条，
+     * 标题是「战地记录仪 | 观战 XX | 武器」，进度条显示目标的血量比例，
+     * 他被打得越残条越短，一眼看出还能不能救。
+     */
     private void sendHud(Player viewer, Player target) {
-        if (!hud) return;
+        if (!hud) {
+            hideBar(viewer);
+            return;
+        }
         String weapon;
         try {
             weapon = alphahu.wbdaddon.util.WeaponNames.resolve(
@@ -206,9 +230,42 @@ public class SpectateCameraModule implements AddonModule, Listener {
         } catch (Throwable t) {
             weapon = "未知";
         }
-        int health = (int) Math.ceil(Math.max(0.0, target.getHealth()));
-        ActionBars.send(viewer, color("&7观战 &f" + target.getName()
-                + " &8| &cHP " + health + " &8| &e" + weapon));
+        String title = color(barTitle
+                .replace("%player%", target.getName())
+                .replace("%weapon%", weapon));
+
+        org.bukkit.boss.BossBar bar = bars.computeIfAbsent(viewer.getUniqueId(), id -> {
+            org.bukkit.boss.BossBar created = Bukkit.createBossBar(
+                    title, barColor, org.bukkit.boss.BarStyle.SOLID);
+            created.setProgress(1.0);
+            created.setVisible(true);
+            return created;
+        });
+        bar.setTitle(title);
+        double max = Math.max(1.0, target.getMaxHealth());
+        bar.setProgress(Math.max(0.0, Math.min(1.0, target.getHealth() / max)));
+        if (!bar.getPlayers().contains(viewer)) {
+            bar.addPlayer(viewer);
+        }
+        if (!bar.isVisible()) {
+            bar.setVisible(true);
+        }
+    }
+
+    private void hideBar(Player viewer) {
+        org.bukkit.boss.BossBar bar = bars.remove(viewer.getUniqueId());
+        if (bar == null) return;
+        bar.setVisible(false);
+        bar.removeAll();
+    }
+
+    private org.bukkit.boss.BarColor parseColor(String raw) {
+        try {
+            return org.bukkit.boss.BarColor.valueOf(
+                    raw == null ? "YELLOW" : raw.trim().toUpperCase());
+        } catch (IllegalArgumentException e) {
+            return org.bukkit.boss.BarColor.YELLOW;
+        }
     }
 
     private boolean anyTeammateAlive(Player viewer, AddonMode mode) {
