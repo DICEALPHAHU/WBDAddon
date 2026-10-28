@@ -2,14 +2,26 @@ package alphahu.wbdaddon.module;
 
 import alphahu.wbdaddon.WBDAddon;
 import alphahu.wbdaddon.api.AddonMode;
+import com.warz.bombdefuse.api.WbdPlayerEliminatedEvent;
 import com.warz.bombdefuse.arena.ArenaSession;
+import com.warz.bombdefuse.util.ActionBars;
 import com.warz.bombdefuse.arena.PlayerRecord;
 import org.bukkit.Bukkit;
 import org.bukkit.GameMode;
+import org.bukkit.Location;
 import org.bukkit.entity.Player;
+import org.bukkit.event.EventHandler;
+import org.bukkit.event.HandlerList;
+import org.bukkit.event.EventPriority;
+import org.bukkit.event.Listener;
+import org.bukkit.event.block.Action;
+import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.scheduler.BukkitTask;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -31,17 +43,29 @@ import java.util.concurrent.ConcurrentHashMap;
  *
  * @author AlphaHu
  */
-public class SpectateCameraModule implements AddonModule {
+public class SpectateCameraModule implements AddonModule, Listener {
 
     private final WBDAddon plugin;
 
     /** 观战者 -> 上一次挂载的目标，用来判断要不要重挂。 */
     private final Map<UUID, UUID> attached = new ConcurrentHashMap<>();
 
+    /** arenaId|team -> 最后一名阵亡队友的倒下位置。 */
+    private final Map<String, DeathSpot> lastDeath = new ConcurrentHashMap<>();
+
+    /** 已经因为「全队阵亡」被拉过去一次的观战者。 */
+    private final Set<UUID> wipeTeleported = ConcurrentHashMap.newKeySet();
+
+    /** 左/右键切换的防抖。 */
+    private final Map<UUID, Long> lastSwitch = new ConcurrentHashMap<>();
+
     private BukkitTask task;
     private long intervalTicks;
     private boolean auto;
     private boolean onlyTeammates;
+    private boolean hud;
+    private boolean keySwitch;
+    private boolean deathCamera;
 
     public SpectateCameraModule(WBDAddon plugin) {
         this.plugin = plugin;
@@ -69,7 +93,12 @@ public class SpectateCameraModule implements AddonModule {
         this.auto = plugin.getConfig().getBoolean("modules.spectate-camera.auto", true);
         this.onlyTeammates = plugin.getConfig()
                 .getBoolean("modules.spectate-camera.only-teammates", true);
+        this.hud = plugin.getConfig().getBoolean("modules.spectate-camera.hud", true);
+        this.keySwitch = plugin.getConfig().getBoolean("modules.spectate-camera.key-switch", true);
+        this.deathCamera = plugin.getConfig()
+                .getBoolean("modules.spectate-camera.death-camera", true);
 
+        Bukkit.getPluginManager().registerEvents(this, plugin);
         this.task = Bukkit.getScheduler().runTaskTimer(plugin, this::tick, 40L, intervalTicks);
         plugin.getLogger().info("观战第一视角已启动：" + (auto ? "阵亡后自动跟随存活队友" : "手动 /spectate")
                 + (onlyTeammates ? "，只跟同阵营" : "") + "。");
@@ -82,6 +111,10 @@ public class SpectateCameraModule implements AddonModule {
             task = null;
         }
         attached.clear();
+        lastDeath.clear();
+        wipeTeleported.clear();
+        lastSwitch.clear();
+        HandlerList.unregisterAll(this);
         plugin.getLogger().info("观战第一视角已卸载。");
     }
 
@@ -103,17 +136,109 @@ public class SpectateCameraModule implements AddonModule {
             }
 
             Player current = spectatorTarget(player);
-            if (current != null && valid(player, mode, current)) {
+            if (current == null || !valid(player, mode, current)) {
+                if (auto) {
+                    current = pickTarget(player, mode);
+                    if (current != null) {
+                        attach(player, current);
+                    }
+                }
+            }
+            if (current != null) {
                 attached.put(player.getUniqueId(), current.getUniqueId());
-                continue;
+                sendHud(player, current);
             }
-            if (!auto) {
-                continue;
+
+            // 全队阵亡：把镜头拉到最后一个队友倒下的位置（每人每次团灭只拉一次）
+            if (deathCamera && !anyTeammateAlive(player, mode)) {
+                if (wipeTeleported.add(player.getUniqueId())) {
+                    teleportToDeathSpot(player, mode);
+                }
+            } else {
+                wipeTeleported.remove(player.getUniqueId());
             }
-            Player next = pickTarget(player, mode);
-            if (next != null) {
-                attach(player, next);
-            }
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // 事件
+    // ------------------------------------------------------------------
+
+    /** 记录每名阵亡队友倒下时的位置与朝向，供「全队阵亡」时拉镜头。 */
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onEliminated(WbdPlayerEliminatedEvent event) {
+        Player victim = event.getVictim();
+        if (victim == null || victim.getLocation() == null) return;
+        String team = event.getVictimTeam() == null ? "?" : event.getVictimTeam().name();
+        lastDeath.put(event.getArenaId() + "|" + team,
+                new DeathSpot(victim.getName(), victim.getWorld().getName(),
+                        victim.getLocation().clone()));
+    }
+
+    /** 左键看上一个队友、右键看下一个。 */
+    @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = true)
+    public void onInteract(PlayerInteractEvent event) {
+        if (!keySwitch) return;
+        if (event.getAction() != Action.LEFT_CLICK_AIR
+                && event.getAction() != Action.RIGHT_CLICK_AIR) {
+            return;
+        }
+        Player player = event.getPlayer();
+        if (player.getGameMode() != GameMode.SPECTATOR) return;
+        AddonMode mode = plugin.getApi() == null ? null : plugin.getApi().getModeFor(player);
+        if (mode == null || mode.isAlive(player)) return;
+
+        long now = System.currentTimeMillis();
+        Long last = lastSwitch.put(player.getUniqueId(), now);
+        if (last != null && now - last < 250L) return;
+
+        boolean forward = event.getAction() == Action.RIGHT_CLICK_AIR;
+        cycle(player, forward ? 1 : -1);
+        event.setCancelled(true);
+    }
+
+    private void sendHud(Player viewer, Player target) {
+        if (!hud) return;
+        String weapon;
+        try {
+            weapon = alphahu.wbdaddon.util.WeaponNames.resolve(
+                    target, plugin.getTacZApi(), plugin.isTacZAvailable());
+        } catch (Throwable t) {
+            weapon = "未知";
+        }
+        int health = (int) Math.ceil(Math.max(0.0, target.getHealth()));
+        ActionBars.send(viewer, color("&7观战 &f" + target.getName()
+                + " &8| &cHP " + health + " &8| &e" + weapon));
+    }
+
+    private boolean anyTeammateAlive(Player viewer, AddonMode mode) {
+        String arena = mode.getArenaId(viewer);
+        String team = mode.getTeamId(viewer);
+        for (Player candidate : Bukkit.getOnlinePlayers()) {
+            if (candidate.equals(viewer)) continue;
+            AddonMode candidateMode = plugin.getApi().getModeFor(candidate);
+            if (candidateMode != mode) continue;
+            if (arena != null && !arena.equals(candidateMode.getArenaId(candidate))) continue;
+            if (team != null && !team.equals(candidateMode.getTeamId(candidate))) continue;
+            if (candidateMode.isAlive(candidate)) return true;
+        }
+        return false;
+    }
+
+    private void teleportToDeathSpot(Player viewer, AddonMode mode) {
+        String arena = mode.getArenaId(viewer);
+        String team = mode.getTeamId(viewer);
+        if (arena == null || team == null) return;
+        DeathSpot spot = lastDeath.get(arena + "|" + team);
+        if (spot == null) return;
+        if (viewer.getWorld() == null || !viewer.getWorld().getName().equals(spot.world())) {
+            return;
+        }
+        try {
+            viewer.teleport(spot.location());
+            viewer.sendMessage(color("&7全队阵亡，视角已移到 &f" + spot.name() + " &7倒下的位置。"));
+        } catch (Throwable t) {
+            plugin.getLogger().warning("观战第一视角：传送到阵亡点失败：" + t);
         }
     }
 
@@ -195,6 +320,11 @@ public class SpectateCameraModule implements AddonModule {
 
     /** {@code /spectate}：切到下一名存活队友。 */
     public boolean next(Player viewer) {
+        return cycle(viewer, 1);
+    }
+
+    /** 按 step 方向在存活队友之间切换（+1 下一个，-1 上一个）。 */
+    private boolean cycle(Player viewer, int step) {
         AddonMode mode = plugin.getApi() == null ? null : plugin.getApi().getModeFor(viewer);
         if (mode == null || viewer.getGameMode() != GameMode.SPECTATOR) {
             viewer.sendMessage(color("&c只有阵亡观战时才能切第一视角。"));
@@ -204,27 +334,28 @@ public class SpectateCameraModule implements AddonModule {
         String team = mode.getTeamId(viewer);
         String arena = mode.getArenaId(viewer);
 
-        Player first = null;
-        boolean afterCurrent = current == null;
+        List<Player> candidates = new ArrayList<>();
         for (Player candidate : Bukkit.getOnlinePlayers()) {
             if (candidate.equals(viewer) || !valid(viewer, mode, candidate)) continue;
             if (arena != null && !arena.equals(mode.getArenaId(candidate))) continue;
             if (team != null && !team.equals(mode.getTeamId(candidate))) continue;
-            if (first == null) first = candidate;
-            if (afterCurrent) {
-                attach(viewer, candidate);
-                viewer.sendMessage(color("&7正在观战：&f" + candidate.getName()));
-                return true;
-            }
-            if (candidate.equals(current)) afterCurrent = true;
+            candidates.add(candidate);
         }
-        if (first != null) {
-            attach(viewer, first);
-            viewer.sendMessage(color("&7正在观战：&f" + first.getName()));
-            return true;
+        if (candidates.isEmpty()) {
+            viewer.sendMessage(color("&c没有可以观战的队友。"));
+            return false;
         }
-        viewer.sendMessage(color("&c没有可以观战的队友。"));
-        return false;
+
+        int index = current == null ? -1 : candidates.indexOf(current);
+        int size = candidates.size();
+        Player next;
+        if (index < 0) {
+            next = candidates.get(step >= 0 ? 0 : size - 1);
+        } else {
+            next = candidates.get(((index + step) % size + size) % size);
+        }
+        attach(viewer, next);
+        return true;
     }
 
     /** {@code /spectate off}：退出第一视角。 */
@@ -237,6 +368,10 @@ public class SpectateCameraModule implements AddonModule {
         attached.remove(viewer.getUniqueId());
         viewer.sendMessage(color("&7已退出第一视角。"));
         return true;
+    }
+
+    /** 一名阵亡队友倒下时的位置。 */
+    private record DeathSpot(String name, String world, Location location) {
     }
 
     private String color(String raw) {
