@@ -65,6 +65,12 @@ public class IndirectKillListener implements Listener {
     /** 本次致死用的武器名，供死亡播报复用，key = 受害者 UUID。 */
     private final Map<UUID, String> killWeapons = new ConcurrentHashMap<>();
 
+    /** 上面那份记录的时间戳，用来判断是不是「这一枪」的。 */
+    private final Map<UUID, Long> killWeaponTimes = new ConcurrentHashMap<>();
+
+    /** 致死武器名的有效期：击杀播报与奖励结算都在淘汰瞬间读，3 秒足够。 */
+    private static final long KILL_WEAPON_TTL_MILLIS = 3000L;
+
     private boolean enabled;
     private double radius;
     private long windowMillis;
@@ -87,6 +93,27 @@ public class IndirectKillListener implements Listener {
     /** 取走这次击杀的武器名（手雷 / 燃烧瓶），没有就返回 null。 */
     public String consumeWeapon(Player victim) {
         return victim == null ? null : killWeapons.remove(victim.getUniqueId());
+    }
+
+    /**
+     * 只看不取：击杀奖励模块要用同一份结果算钱，而死亡播报要显示它。
+     *
+     * <p>两边都 consume 的话先跑的那个拿到值、后跑的那个拿到 null。
+     * 这里改成只读，并用「多久之前记的」来防串台：超过 {@link #KILL_WEAPON_TTL_MILLIS}
+     * 的旧记录当作不存在，免得上一颗手雷的名字被安到后来的步枪击杀上。
+     */
+    public String peekWeapon(Player victim) {
+        if (victim == null) return null;
+        ThrowRecord record = null;
+        String name = killWeapons.get(victim.getUniqueId());
+        Long stamp = killWeaponTimes.get(victim.getUniqueId());
+        if (name == null || stamp == null) return null;
+        if (System.currentTimeMillis() - stamp > KILL_WEAPON_TTL_MILLIS) {
+            killWeapons.remove(victim.getUniqueId());
+            killWeaponTimes.remove(victim.getUniqueId());
+            return null;
+        }
+        return name;
     }
 
     // ------------------------------------------------------------------
@@ -185,6 +212,7 @@ public class IndirectKillListener implements Listener {
 
         String weapon = lastThrowName(owner, victim, damager);
         killWeapons.put(victim.getUniqueId(), weapon);
+        killWeaponTimes.put(victim.getUniqueId(), System.currentTimeMillis());
         try {
             session.eliminate(victim, owner);
         } catch (Throwable t) {

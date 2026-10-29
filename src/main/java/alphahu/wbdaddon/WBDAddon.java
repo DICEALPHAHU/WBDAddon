@@ -15,6 +15,7 @@ import alphahu.wbdaddon.module.BombDefuseSoundModule;
 import alphahu.wbdaddon.module.FreezeCountdownModule;
 import alphahu.wbdaddon.module.JourneyMapModule;
 import alphahu.wbdaddon.module.KillReportsModule;
+import alphahu.wbdaddon.module.KillRewardModule;
 import alphahu.wbdaddon.module.LoadoutGuardModule;
 import alphahu.wbdaddon.module.MatchStatusModule;
 import alphahu.wbdaddon.module.MenuModule;
@@ -146,6 +147,7 @@ public final class WBDAddon extends JavaPlugin {
         // 4. 注册模块
         this.moduleManager = new ModuleManager(this);
         moduleManager.register(new KillReportsModule(this));
+        moduleManager.register(new KillRewardModule(this));
         moduleManager.register(new MatchStatusModule(this));
         moduleManager.register(new BombDefuseSoundModule(this));
         moduleManager.register(new ArenaHungerModule(this));

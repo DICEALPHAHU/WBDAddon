@@ -46,7 +46,8 @@ public class DeathMessageListener implements Listener {
         if (killer != null) {
             // 手雷 / 燃烧瓶这类是间接归属的，用投掷时的物品名；
             // 其余走 WeaponNames 按击杀者当时手持的武器解析
-            String indirectWeapon = indirect == null ? null : indirect.consumeWeapon(victim);
+            // 只读不取：击杀奖励模块也要用同一份结果算钱
+            String indirectWeapon = indirect == null ? null : indirect.peekWeapon(victim);
             String weapon = indirectWeapon != null ? indirectWeapon
                     : WeaponNames.resolve(killer, plugin.getTacZApi(), plugin.isTacZAvailable());
             message = plugin.getConfig()
@@ -55,6 +56,11 @@ public class DeathMessageListener implements Listener {
                     .replace("%victim%", victim.getName())
                     .replace("%killer%", killer.getName())
                     .replace("%weapon%", weapon);
+            // 赏金跟在后面：CS 式分武器奖励，玩家得看得见这次值多少
+            int reward = rewardOf(killer, indirectWeapon);
+            if (reward >= 0) {
+                message = message + " &8(+$" + reward + ")";
+            }
         } else {
             message = plugin.getConfig()
                     .getString("modules.kill-reports.death-message-no-killer",
@@ -82,6 +88,19 @@ public class DeathMessageListener implements Listener {
      * <p>顺带记一笔 Paper 的已知问题：切换槽位后立刻攻击，
      * 读到的可能仍是新槽位的物品。这是事件本身的时序问题，插件层面修不掉。
      */
+    /** 这次击杀的赏金；模块没启用或规则不接管时返回 -1。 */
+    private int rewardOf(Player killer, String indirectWeapon) {
+        try {
+            var module = plugin.getModuleManager().getModule("kill-reward");
+            if (module instanceof alphahu.wbdaddon.module.KillRewardModule reward) {
+                return reward.previewReward(killer, indirectWeapon);
+            }
+        } catch (Throwable ignored) {
+            // 奖励模块被关掉就不显示
+        }
+        return -1;
+    }
+
     private String color(String s) {
         return ChatColor.translateAlternateColorCodes('&', s);
     }
