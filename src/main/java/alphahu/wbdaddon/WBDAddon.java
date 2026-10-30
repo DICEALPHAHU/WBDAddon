@@ -30,6 +30,7 @@ import alphahu.wbdaddon.module.RoundEventsModule;
 import alphahu.wbdaddon.module.RoundSummaryModule;
 import alphahu.wbdaddon.module.ShopPriceModule;
 import alphahu.wbdaddon.module.ShortHandedCompensationModule;
+import alphahu.wbdaddon.module.SneakSpeedModule;
 import alphahu.wbdaddon.module.TeamArmorModule;
 import alphahu.wbdaddon.module.TechnicalPauseModule;
 import alphahu.wbdaddon.module.TeammateGlowModule;
@@ -152,6 +153,7 @@ public final class WBDAddon extends JavaPlugin {
         moduleManager.register(new KillRewardModule(this));
         moduleManager.register(new InteractionLockModule(this));
         moduleManager.register(new DefaultLoadoutModule(this));
+        moduleManager.register(new SneakSpeedModule(this));
         moduleManager.register(new MatchStatusModule(this));
         moduleManager.register(new BombDefuseSoundModule(this));
         moduleManager.register(new ArenaHungerModule(this));
