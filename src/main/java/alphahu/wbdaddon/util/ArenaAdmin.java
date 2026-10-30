@@ -1,6 +1,9 @@
 package alphahu.wbdaddon.util;
 
 import com.warz.bombdefuse.arena.ArenaSession;
+import com.warz.bombdefuse.arena.PlayerRecord;
+import org.bukkit.GameMode;
+import org.bukkit.entity.Player;
 import com.warz.bombdefuse.model.GameState;
 import com.warz.bombdefuse.model.RoundEndReason;
 import com.warz.bombdefuse.model.Team;
@@ -120,6 +123,68 @@ public final class ArenaAdmin {
             return true;
         } catch (Throwable t) {
             logger.warning("管理面板：强制结算失败：" + t);
+            return false;
+        }
+    }
+
+    /** 立刻给玩家加钱（受 WBD 金钱上限约束）。 */
+    public static boolean addMoney(ArenaSession session, Player player, int amount, Logger logger) {
+        if (session == null || player == null) return false;
+        try {
+            session.addMoney(player, amount);
+            return true;
+        } catch (Throwable t) {
+            logger.warning("管理面板：加钱失败：" + t);
+            return false;
+        }
+    }
+
+    /**
+     * 强行复活一名阵亡玩家。
+     *
+     * <p>WBD 的复活流程只在回合开始跑，中途死了就只能等下一回合。这里手动把他
+     * 标成存活、切回冒险模式、传回本方出生点、补满血 —— 用于「测试卡住了」或
+     * 「有人误判死亡」的救场。
+     */
+    public static boolean revive(ArenaSession session, Player player, Logger logger) {
+        if (session == null || player == null) return false;
+        try {
+            PlayerRecord record = session.getRecord(player);
+            if (record == null) return false;
+            record.setAlive(true);
+
+            Team team = record.getTeam();
+            player.setGameMode(GameMode.ADVENTURE);
+            player.setHealth(player.getMaxHealth());
+            player.setFoodLevel(20);
+            player.setFireTicks(0);
+
+            java.util.List<org.bukkit.Location> spawns =
+                    session.getConfig().getSpawns(team);
+            if (spawns != null && !spawns.isEmpty()) {
+                player.teleport(spawns.get(0));
+            }
+            return true;
+        } catch (Throwable t) {
+            logger.warning("管理面板：强行复活失败：" + t);
+            return false;
+        }
+    }
+
+    /**
+     * 跳过回合结束的等待：当前处于 {@code ROUND_END} 时把倒计时清零，
+     * 下一 tick 就会进入下一回合的倒计时。
+     */
+    public static boolean skipRoundEnd(ArenaSession session, Logger logger) {
+        if (session == null) return false;
+        resolve(logger);
+        if (stateTicksField == null) return false;
+        if (session.getState() != GameState.ROUND_END) return false;
+        try {
+            stateTicksField.setInt(session, 0);
+            return true;
+        } catch (Throwable t) {
+            logger.warning("管理面板：跳过回合间隔失败：" + t);
             return false;
         }
     }

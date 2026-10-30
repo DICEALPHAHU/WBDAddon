@@ -1277,6 +1277,19 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
         }
     }
 
+    /** 是不是「默认装备」模块发的白送装备。 */
+    private boolean isDefaultItem(ItemStack item) {
+        try {
+            var module = plugin.getModuleManager().getModule("default-loadout");
+            if (module instanceof DefaultLoadoutModule loadout) {
+                return loadout.isDefaultItem(item);
+            }
+        } catch (Throwable ignored) {
+            // 模块被关掉就按普通物品处理
+        }
+        return false;
+    }
+
     private void moveItem(Player player, ItemStack item, int fromSlot, int targetSlot) {
         if (item == null || item.getType().isAir() || fromSlot == targetSlot) return;
         PlayerInventory inventory = player.getInventory();
@@ -1828,8 +1841,19 @@ public final class LoadoutGuardModule implements AddonModule, Listener {
 
         String oldName = itemName(oldItem.item);
         String newName = itemName(newItem.item);
+
+        // 默认装备（开局白送的枪）换掉时不退款，直接丢到脚下：
+        // 白送的东西能退钱就是刷钱口子
+        boolean oldIsDefault = isDefaultItem(oldItem.item);
         setItemAt(inventory, oldItem.slot, null);
-        if (refund > 0) {
+        if (oldIsDefault) {
+            refund = 0;
+            dropAtFeet(player, oldItem.item);
+            if (debug) {
+                plugin.getLogger().info("[loadout] " + player.getName() + " 的默认 "
+                        + oldName + " 已丢到地上并被 " + newName + " 替换。");
+            }
+        } else if (refund > 0) {
             refund(session, player, refund);
         }
         moveItem(player, newItem.item, newItem.slot, targetSlot);

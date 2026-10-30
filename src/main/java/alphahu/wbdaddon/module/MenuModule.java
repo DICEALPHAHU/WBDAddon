@@ -306,6 +306,12 @@ public class MenuModule implements AddonModule, Listener {
                     forceRound(player, true);
                 } else if (slot == 14) {
                     forceRound(player, false);
+                } else if (slot == 11) {
+                    adminMoney(player, clickEvent == null || clickEvent.isShiftClick());
+                } else if (slot == 13) {
+                    adminRevive(player);
+                } else if (slot == 15) {
+                    adminSkipRoundEnd(player);
                 } else if (slot == 16) {
                     open(player, Screen.ADMIN_DATA, null, null);
                 } else if (slot == 22) {
@@ -431,6 +437,48 @@ public class MenuModule implements AddonModule, Listener {
             if (record.getTeam() == team) count++;
         }
         return count;
+    }
+
+    private void adminMoney(Player admin, boolean big) {
+        ArenaSession session = sessionOf(admin);
+        if (session == null) {
+            admin.sendMessage(color("&c你不在任何竞技场里。"));
+            return;
+        }
+        int amount = big ? 5000 : 1000;
+        if (ArenaAdmin.addMoney(session, admin, amount, plugin.getLogger())) {
+            admin.sendMessage(color("&a已加 &e$" + amount + "&a。"));
+        } else {
+            admin.sendMessage(color("&c加钱失败。"));
+        }
+    }
+
+    private void adminRevive(Player admin) {
+        ArenaSession session = sessionOf(admin);
+        if (session == null) {
+            admin.sendMessage(color("&c你不在任何竞技场里。"));
+            return;
+        }
+        if (ArenaAdmin.revive(session, admin, plugin.getLogger())) {
+            admin.closeInventory();
+            admin.sendMessage(color("&a已强行复活。"));
+        } else {
+            admin.sendMessage(color("&c复活失败（你可能还活着）。"));
+        }
+    }
+
+    private void adminSkipRoundEnd(Player admin) {
+        ArenaSession session = sessionOf(admin);
+        if (session == null) {
+            admin.sendMessage(color("&c你不在任何竞技场里。"));
+            return;
+        }
+        if (ArenaAdmin.skipRoundEnd(session, plugin.getLogger())) {
+            admin.closeInventory();
+            admin.sendMessage(color("&a已跳过回合间隔，马上开下一回合。"));
+        } else {
+            admin.sendMessage(color("&c当前不是回合结束阶段，无法跳过。"));
+        }
     }
 
     private void forceRound(Player admin, boolean win) {
@@ -633,6 +681,17 @@ public class MenuModule implements AddonModule, Listener {
             inventory.setItem(14, item(Material.GRAY_WOOL, "&7本回合强制失败",
                     "&c你不在比赛中，无法按阵营判定"));
         }
+
+        inventory.setItem(11, item(Material.GOLD_INGOT, "&e加钱",
+                "&7左键 &f+$1000",
+                "&7Shift + 左键 &f+$5000"));
+
+        inventory.setItem(13, item(Material.TOTEM_OF_UNDYING, "&e强行复活",
+                session == null ? "&c你不在竞技场里" : "&7把自己标回存活并传回出生点"));
+
+        inventory.setItem(15, item(Material.CLOCK, "&e跳过回合间隔",
+                "&7当前是回合结束时，立即进入下一回合",
+                "&7（不在回合结束阶段则无效）"));
 
         inventory.setItem(16, item(Material.CHEST, "&e数据管理",
                 "&7清除玩家生涯数据 / 比赛记录"));
