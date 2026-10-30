@@ -125,6 +125,58 @@ public final class ArenaAdmin {
     }
 
     /**
+     * 临时塞一个「幽灵玩家」记录，骗过 WBD 的开局人数检查。
+     *
+     * <p>WBD 的 {@code ensurePlayableTeams()} 要求
+     * {@code 玩家数 >= max(2, min-players)} 且两边都有人，否则
+     * {@code tickCountdown} / {@code startRound} 都会直接 {@code resetToWaiting()} ——
+     * 所以单人维护模式怎么点强制开局都开不起来。
+     *
+     * <p>这里往 {@code players} 表里放一条假记录占住空的那一边，让检查通过；
+     * 回合真正开始后由调用方立刻删掉，避免它继续参与存活人数与结算。
+     *
+     * @return 假记录的 UUID；失败返回 null
+     */
+    public static java.util.UUID addPhantom(ArenaSession session, Team team, Logger logger) {
+        if (session == null || team == null) return null;
+        try {
+            java.lang.reflect.Field field = ArenaSession.class.getDeclaredField("players");
+            field.setAccessible(true);
+            @SuppressWarnings("unchecked")
+            java.util.Map<Object, Object> players =
+                    (java.util.Map<Object, Object>) field.get(session);
+            if (players == null) return null;
+
+            java.util.UUID uuid = java.util.UUID.nameUUIDFromBytes(
+                    ("wbdaddon-phantom-" + session.getConfig().getId() + "-" + team.name())
+                            .getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            Object record = new com.warz.bombdefuse.arena.PlayerRecord(uuid, "维护模式", team, 0);
+            players.put(uuid, record);
+            return uuid;
+        } catch (Throwable t) {
+            logger.warning("管理面板：插入测试占位记录失败：" + t);
+            return null;
+        }
+    }
+
+    /** 移除 {@link #addPhantom} 放进去的那条记录。 */
+    public static void removePhantom(ArenaSession session, java.util.UUID uuid, Logger logger) {
+        if (session == null || uuid == null) return;
+        try {
+            java.lang.reflect.Field field = ArenaSession.class.getDeclaredField("players");
+            field.setAccessible(true);
+            @SuppressWarnings("unchecked")
+            java.util.Map<Object, Object> players =
+                    (java.util.Map<Object, Object>) field.get(session);
+            if (players != null) {
+                players.remove(uuid);
+            }
+        } catch (Throwable t) {
+            logger.warning("管理面板：移除测试占位记录失败：" + t);
+        }
+    }
+
+    /**
      * 锁 / 解锁「回合自动结算」。
      *
      * <p>WBD 在 {@code startRound} 里会把 {@code roundEndingLocked} 置回 false，

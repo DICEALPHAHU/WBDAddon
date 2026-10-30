@@ -87,6 +87,9 @@ public class MenuModule implements AddonModule, Listener {
     /** 处于「单人测试模式」的竞技场：回合不会自动结算，需手动强制结算。 */
     private final Set<String> testArenas = ConcurrentHashMap.newKeySet();
 
+    /** 测试模式里塞进去的「幽灵玩家」记录，key = 竞技场 id。 */
+    private final Map<String, UUID> phantoms = new ConcurrentHashMap<>();
+
     /** 当前这场比赛已经计入过的玩家，避免离场和比赛结束重复累加。 */
     private final Map<String, Set<UUID>> counted = new ConcurrentHashMap<>();
 
@@ -390,8 +393,19 @@ public class MenuModule implements AddonModule, Listener {
         int ctCount = teamCount(session, Team.CT);
         boolean testMode = tCount == 0 || ctCount == 0;
 
+        // WBD 开局硬性要求「至少 2 人且两边都有人」，单人怎么点都开不起来。
+        // 维护模式：往空的那一边塞一条占位记录骗过检查，回合开始后立刻删掉。
+        if (testMode) {
+            Team emptySide = tCount == 0 ? Team.T : Team.CT;
+            UUID phantom = ArenaAdmin.addPhantom(session, emptySide, plugin.getLogger());
+            if (phantom != null) {
+                phantoms.put(session.getConfig().getId(), phantom);
+            }
+        }
+
         // 倒计时压到 1 秒，跳过大厅等待
         if (!ArenaAdmin.forceStart(session, 20, plugin.getLogger())) {
+            removePhantom(session);
             admin.sendMessage(color("&c强制开局失败（可能是 WBD 版本差异）。"));
             return;
         }
@@ -1025,6 +1039,7 @@ public class MenuModule implements AddonModule, Listener {
     @EventHandler
     public void onMatchEnd(WbdMatchEndEvent event) {
         testArenas.remove(event.getArenaId());
+        removePhantom(session(event.getArenaId()));
         Team winner = event.getWinner();
         String winnerName = winner == null ? "无" : winner.name();
         lastResults.put(event.getArenaId(),
@@ -1083,7 +1098,10 @@ public class MenuModule implements AddonModule, Listener {
         // 测试模式：WBD 在 startRound 里会把 roundEndingLocked 置回 false，
         // 这里再锁一次，保证单人测试时回合不会瞬间判负
         if (testArenas.contains(event.getArenaId())) {
-            ArenaAdmin.setRoundLocked(session(event.getArenaId()), true, plugin.getLogger());
+            ArenaSession session = session(event.getArenaId());
+            // 占位记录只用来过开局检查，回合一开始就撤掉
+            removePhantom(session);
+            ArenaAdmin.setRoundLocked(session, true, plugin.getLogger());
         }
     }
 
@@ -1106,6 +1124,14 @@ public class MenuModule implements AddonModule, Listener {
         ArenaAdmin.setRoundLocked(session, false, plugin.getLogger());
         Player admin = Bukkit.getPlayer(event.getPlayer().getUniqueId());
         broadcastArena(arenaId, "&e已有第二名玩家进场，单人测试模式结束，回合判定恢复正常。");
+    }
+
+    private void removePhantom(ArenaSession session) {
+        if (session == null) return;
+        UUID phantom = phantoms.remove(session.getConfig().getId());
+        if (phantom != null) {
+            ArenaAdmin.removePhantom(session, phantom, plugin.getLogger());
+        }
     }
 
     private void broadcastArena(String arenaId, String message) {
