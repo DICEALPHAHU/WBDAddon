@@ -48,8 +48,18 @@ public class DeathMessageListener implements Listener {
             // 其余走 WeaponNames 按击杀者当时手持的武器解析
             // 只读不取：击杀奖励模块也要用同一份结果算钱
             String indirectWeapon = indirect == null ? null : indirect.peekWeapon(victim);
-            String weapon = indirectWeapon != null ? indirectWeapon
-                    : WeaponNames.resolve(killer, plugin.getTacZApi(), plugin.isTacZAvailable());
+            String weapon;
+            if (indirectWeapon != null) {
+                weapon = indirectWeapon;
+            } else {
+                // 互杀场景：先倒下的那个人已经切观战、主手被清空，
+                // 这时不能读他此刻的主手，要用造成伤害那一刻的快照
+                var hand = killer.getInventory().getItemInMainHand();
+                var snapshot = damageTracker.weaponSnapshot(killer);
+                var used = (hand == null || hand.getType().isAir()) && snapshot != null
+                        ? snapshot : hand;
+                weapon = WeaponNames.resolveItem(used, plugin.getTacZApi(), plugin.isTacZAvailable());
+            }
             message = plugin.getConfig()
                     .getString("modules.kill-reports.death-message-with-killer",
                             "&c%killer% &7使用 &e%weapon% &7淘汰了 &c%victim%")

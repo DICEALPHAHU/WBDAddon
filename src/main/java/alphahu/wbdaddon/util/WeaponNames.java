@@ -184,8 +184,16 @@ public final class WeaponNames {
         if (killer == null) {
             return "未知";
         }
+        return resolveItem(killer.getInventory().getItemInMainHand(), tacZApi, tacZUsable);
+    }
 
-        ItemStack item = killer.getInventory().getItemInMainHand();
+    /**
+     * 按物品本身解析名字。
+     *
+     * <p>给「互杀」场景用：击杀结算时杀手可能已经阵亡切观战、主手被清空，
+     * 这时得用伤害瞬间抓的快照去解析，而不是再读一次主手。
+     */
+    public static String resolveItem(ItemStack item, TacZSpigotApi tacZApi, boolean tacZUsable) {
         if (item == null || item.getType().isAir()) {
             return "拳头";
         }

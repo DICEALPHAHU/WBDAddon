@@ -31,6 +31,7 @@ WarZBombDefuse 的第三方附加组件合集：击杀报告、伤害统计、�
 | 模块 | id | 说明 |
 | --- | --- | --- |
 | 击杀报告 | `kill-reports` | 替换默认淘汰消息、显示击杀者与武器；回合结束给每人单独发送自己的伤害统计 |
+| 交互限制 | `interaction-lock` | 战局内禁止与指定方块交互（默认只拦活板门） |
 | 击杀奖励 | `kill-reward` | 按武器发不同赏金（刀杀重赏、大狙低赏），数字在 `kill-rewards.yml` |
 | 比赛状态 | `match-status` | 顶部 ActionBar 显示双方存活人数；炸弹安放后 BossBar 显示倒计时 |
 | 拆弹声音提示 | `bomb-defuse-sound` | CT 开始拆弹时在 C4 位置播放可定位的提示音与滴答声 |

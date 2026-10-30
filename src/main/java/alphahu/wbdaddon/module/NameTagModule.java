@@ -47,6 +47,11 @@ public class NameTagModule implements AddonModule {
     /** 观察者 -> 自己隐藏队伍里当前有哪些人。 */
     private final Map<UUID, Set<String>> hiddenEntries = new ConcurrentHashMap<>();
 
+    /** 观察者 -> 被我们藏起来的「对方观战者」。 */
+    private final Map<UUID, Set<UUID>> hiddenSpectators = new ConcurrentHashMap<>();
+
+    private boolean hideEnemySpectators;
+
     private BukkitTask task;
     private long intervalTicks;
     private boolean hideEnemies;
@@ -76,6 +81,8 @@ public class NameTagModule implements AddonModule {
                 .getLong("modules.name-tag.interval-ticks", 10L));
         this.hideEnemies = plugin.getConfig()
                 .getBoolean("modules.name-tag.hide-enemies", true);
+        this.hideEnemySpectators = plugin.getConfig()
+                .getBoolean("modules.name-tag.hide-enemy-spectators", true);
 
         this.task = Bukkit.getScheduler().runTaskTimer(plugin, this::tick, 20L, intervalTicks);
         plugin.getLogger().info("昵称标签已启动：" + (hideEnemies ? "敌人名牌对你看不到" : "只同步不隐藏")
@@ -140,6 +147,8 @@ public class NameTagModule implements AddonModule {
             }
         }
 
+        syncHiddenSpectators(viewer, mode, teamId);
+
         Team team = board.getTeam(HIDE_TEAM);
         if (team == null) {
             team = board.registerNewTeam(HIDE_TEAM);
@@ -161,7 +170,63 @@ public class NameTagModule implements AddonModule {
         hiddenEntries.put(viewer.getUniqueId(), current);
     }
 
+    /**
+     * 对方阵营的观战者，对彼此直接隐身。
+     *
+     * <p>光靠隐藏名牌挡不住小地图：JourneyMap 画的是实体列表，两个观战者
+     * 都不属于任何队伍时，客户端会把对方当成「路人」画在地图上，于是我方
+     * 存活者的位置就被对面的观战者看光了。
+     *
+     * <p>观战者在游戏里本来就没有实体可见性，直接 {@code hidePlayer} 掉，
+     * 客户端连实体都收不到，小地图自然没有可画的东西。
+     */
+    private void syncHiddenSpectators(Player viewer, AddonMode mode, String teamId) {
+        Set<UUID> hidden = hiddenSpectators.computeIfAbsent(viewer.getUniqueId(),
+                k -> ConcurrentHashMap.newKeySet());
+        if (!hideEnemySpectators) {
+            clearHidden(viewer, hidden);
+            return;
+        }
+
+        Set<UUID> desired = new HashSet<>();
+        for (Player other : Bukkit.getOnlinePlayers()) {
+            if (other.equals(viewer)) continue;
+            AddonMode otherMode = plugin.getApi().getModeFor(other);
+            if (otherMode != mode) continue;
+            if (otherMode.isAlive(other)) continue;           // 只管对方的观战者
+            String otherTeam = otherMode.getTeamId(other);
+            if (otherTeam == null || otherTeam.equals(teamId)) continue;
+            desired.add(other.getUniqueId());
+        }
+
+        for (UUID id : new HashSet<>(hidden)) {
+            if (desired.contains(id)) continue;
+            Player other = Bukkit.getPlayer(id);
+            if (other != null) viewer.showPlayer(plugin, other);
+            hidden.remove(id);
+        }
+        for (UUID id : desired) {
+            if (hidden.contains(id)) continue;
+            Player other = Bukkit.getPlayer(id);
+            if (other == null) continue;
+            viewer.hidePlayer(plugin, other);
+            hidden.add(id);
+        }
+    }
+
+    private void clearHidden(Player viewer, Set<UUID> hidden) {
+        for (UUID id : new HashSet<>(hidden)) {
+            Player other = Bukkit.getPlayer(id);
+            if (other != null) viewer.showPlayer(plugin, other);
+        }
+        hidden.clear();
+    }
+
     private void clearViewer(Player viewer) {
+        Set<UUID> hiddenSpectatorsOfViewer = hiddenSpectators.remove(viewer.getUniqueId());
+        if (hiddenSpectatorsOfViewer != null) {
+            clearHidden(viewer, hiddenSpectatorsOfViewer);
+        }
         Set<String> current = hiddenEntries.remove(viewer.getUniqueId());
         syncedBoards.remove(viewer.getUniqueId());
         if (current == null || current.isEmpty()) return;
@@ -180,5 +245,6 @@ public class NameTagModule implements AddonModule {
         }
         hiddenEntries.clear();
         syncedBoards.clear();
+        hiddenSpectators.clear();
     }
 }

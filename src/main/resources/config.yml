@@ -55,6 +55,26 @@ modules:
     damage-line-format: "你对 &f%victim% &7造成了 &b%damage% &7伤害"
 
   # ----------------------------------------------------------
+  # 交互限制
+  # 功能：战局内禁止与指定方块交互（默认只拦活板门）。
+  #       只作用于比赛中的玩家，大厅与观战不受影响。
+  # ----------------------------------------------------------
+  interaction-lock:
+    enabled: true
+
+    # 是否拦所有活板门（现代 Material 里是 OAK_TRAPDOOR / SPRUCE_TRAPDOOR …）
+    block-trapdoors: true
+
+    # 额外要拦的方块，按 Bukkit Material 名称填写
+    blocked-materials: []
+      # - LEVER
+      # - STONE_BUTTON
+
+    # 拦下时是否提示玩家（默认静默，避免刷屏）
+    notify: false
+    notify-message: "&7战局内不能使用这个。"
+
+  # ----------------------------------------------------------
   # 击杀奖励
   # 功能：按武器发不同的击杀赏金（CS 式：刀杀重赏、大狙低赏）。
   #       具体数字在 kill-rewards.yml 里单独配，首次启动自动生成。

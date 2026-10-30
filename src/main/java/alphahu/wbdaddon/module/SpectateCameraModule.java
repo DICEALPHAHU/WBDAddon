@@ -236,8 +236,14 @@ public class SpectateCameraModule implements AddonModule, Listener {
         lastLocation.put(player.getUniqueId(), player.getLocation().clone());
     }
 
-    /** 左键看上一个队友、右键看下一个。 */
-    @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = true)
+    /**
+     * 左键看上一个队友、右键看下一个。
+     *
+     * <p>这里**不能**加 {@code ignoreCancelled = true}：观战者点空气时，
+     * WBD 的保护区会把这个交互事件取消掉，一旦带上这个参数，本监听器就再也收不到事件——
+     * 表现就是「观战时左右键没反应」。
+     */
+    @EventHandler(priority = EventPriority.LOWEST)
     public void onInteract(PlayerInteractEvent event) {
         if (!keySwitch) return;
         if (event.getAction() != Action.LEFT_CLICK_AIR

@@ -44,7 +44,7 @@ public class WBDAddonCommand implements CommandExecutor, TabCompleter {
 
     private static final List<String> SUB_COMMANDS =
             Arrays.asList("help", "reload", "modules", "modes", "sound", "pause", "resume",
-                    "retag", "shopscan", "admin");
+                    "retag", "shopscan", "admin", "team");
 
     public WBDAddonCommand(WBDAddon plugin) {
         this.plugin = plugin;
@@ -129,6 +129,8 @@ public class WBDAddonCommand implements CommandExecutor, TabCompleter {
 
             case "admin" -> openAdmin(sender);
 
+            case "team" -> teamCheck(sender);
+
             default -> sender.sendMessage(color("&c未知子命令。使用 /wbdaddon help 查看帮助。"));
         }
 
@@ -147,8 +149,80 @@ public class WBDAddonCommand implements CommandExecutor, TabCompleter {
         sender.sendMessage(color("&e/wbdaddon retag [玩家] &7- 重打装备分类标签"));
         sender.sendMessage(color("&e/wbdaddon shopscan &7- 扫描商店商品并输出分类表片段"));
         sender.sendMessage(color("&e/wbdaddon admin &7- 打开管理员面板"));
+        sender.sendMessage(color("&e/wbdaddon team &7- 自查阵营状态（排查穿错队服 / 买不了东西）"));
         sender.sendMessage(color("&e/pause &7- 玩家请求技术暂停（每队每场限次）"));
         sender.sendMessage(color("&6=========================="));
+    }
+
+    /**
+     * {@code /wbdaddon team}：把自己的阵营状态全打出来。
+     *
+     * <p>排查「明明是 T，系统却当 CT」这类问题时，关键是分清**哪一层**记错了：
+     * 是 WBD 的 PlayerRecord、还是附加组件读到的模式接口、还是购买区判定。
+     * 三层都打出来，一眼就能看出分歧在哪。
+     */
+    private void teamCheck(CommandSender sender) {
+        if (!(sender instanceof Player player)) {
+            sender.sendMessage(color("&c该命令只能由玩家执行。"));
+            return;
+        }
+        var wbd = plugin.getWbd();
+        if (wbd == null || wbd.getArenaManager() == null) {
+            sender.sendMessage(color("&cWarZBombDefuse 不可用。"));
+            return;
+        }
+        var session = wbd.getArenaManager().getSession(player);
+        if (session == null) {
+            sender.sendMessage(color("&7你不在任何竞技场里。"));
+            return;
+        }
+
+        var record = session.getRecord(player);
+        String recordTeam = record == null ? "无记录" : String.valueOf(record.getTeam());
+        String sessionTeam = String.valueOf(session.getTeam(player));
+
+        String modeTeam = "未接入";
+        if (plugin.getApi() != null) {
+            var mode = plugin.getApi().getModeFor(player);
+            modeTeam = mode == null ? "不在任何模式" : String.valueOf(mode.getTeamId(player));
+        }
+
+        sender.sendMessage(color("&8[&6阵营自查&8]"));
+        sender.sendMessage(color("&7竞技场：&f" + session.getConfig().getId()));
+        sender.sendMessage(color("&7PlayerRecord 阵营：&f" + recordTeam));
+        sender.sendMessage(color("&7ArenaSession.getTeam：&f" + sessionTeam));
+        sender.sendMessage(color("&7附加组件读到的阵营：&f" + modeTeam));
+        if (record != null) {
+            sender.sendMessage(color("&7存活：&f" + record.isAlive()
+                    + "&7  排队下一回合：&f" + record.isQueuedForNextRound()));
+        }
+
+        // 购买区判定：能不能买东西，取决于「你站的这块地方」是不是「你这一方的购买区」
+        try {
+            var from = record == null ? null : record.getTeam();
+            var to = session.getTeam(player);
+            sender.sendMessage(color("&7购买区（按记录阵营 &f" + recordTeam + "&7）："
+                    + zoneStatus(session, from, player.getLocation())));
+            if (to != null && to != from) {
+                sender.sendMessage(color("&7购买区（按 session 阵营 &f" + sessionTeam + "&7）："
+                        + zoneStatus(session, to, player.getLocation())));
+            }
+        } catch (Throwable t) {
+            sender.sendMessage(color("&8购买区判定不可用：" + t));
+        }
+        sender.sendMessage(color("&8上面几行里如果阵营不一致，就是分歧点。"));
+    }
+
+    private String zoneStatus(com.warz.bombdefuse.arena.ArenaSession session,
+                              com.warz.bombdefuse.model.Team team,
+                              org.bukkit.Location location) {
+        if (team == null || location == null) return "无法判定";
+        var zones = session.getConfig().getBuyZones(team);
+        if (zones == null || zones.isEmpty()) return "&7没有配置购买区";
+        for (var zone : zones) {
+            if (zone.contains(location)) return "&a在购买区内";
+        }
+        return "&c不在购买区";
     }
 
     /** {@code /wbdaddon admin}：打开管理员面板。 */
