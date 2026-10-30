@@ -65,11 +65,11 @@ modules:
 
     # T 方默认手枪（写商店商品 id 或 TacZ GunId 都行）
     t:
-      - P320
+      - G17
 
     # CT 方默认手枪
     ct:
-      - G17
+      - P320
 
     # 默认近战（写商品 id 或 GunId）
     melee: "tacz_modern_kinetic_gun_6"
