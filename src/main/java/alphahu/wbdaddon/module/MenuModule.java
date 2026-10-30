@@ -94,6 +94,9 @@ public class MenuModule implements AddonModule, Listener {
     /** 测试模式的看护任务：维持无限购买时间。 */
     private org.bukkit.scheduler.BukkitTask testTask;
 
+    /** 进入测试模式前 WBD 的 buy-seconds，退出时还原；null 表示当前没接管。 */
+    private Integer savedBuySeconds;
+
     /** 当前这场比赛已经计入过的玩家，避免离场和比赛结束重复累加。 */
     private final Map<String, Set<UUID>> counted = new ConcurrentHashMap<>();
 
@@ -157,6 +160,7 @@ public class MenuModule implements AddonModule, Listener {
             testTask.cancel();
             testTask = null;
         }
+        restoreBuySeconds();
         HandlerList.unregisterAll(this);
         for (Player player : Bukkit.getOnlinePlayers()) {
             if (player.getOpenInventory().getTopInventory().getHolder() instanceof MenuHolder) {
@@ -1219,25 +1223,47 @@ public class MenuModule implements AddonModule, Listener {
     }
 
     /**
-     * 单人测试模式：把冻结（购买）阶段一直续着。
+     * 单人测试模式：把「购买时间」改成无限。
      *
-     * <p>WBD 的冻结阶段是唯一的买枪窗口，默认只有十几秒；一个人测东西时
-     * 光挑枪就用完了。这里每秒把剩余冻结时间顶回 60 秒，等于「购买时间无限」。
-     * 想真正开打时按面板上的「结束购买阶段」，把剩余时间打到 1 tick 即可。
+     * <p>WBD 的购买窗口由 {@code buy-seconds} 决定：FREEZE 阶段永远能买，
+     * 进入 LIVE 之后只有前 N 秒能买。维护模式把 N 临时顶到一个极大的值，
+     * 于是**开打之后也能随时买**，不用把玩家冻在购买阶段（那样连路都走不了）。
+     *
+     * <p>退出测试模式（比赛结束 / 竞技场没了 / 模块卸载）时还原原值，
+     * 不会把「无限购买」带到正常对局里。
      */
     private void tickTestArenas() {
-        if (testArenas.isEmpty()) return;
+        if (testArenas.isEmpty()) {
+            restoreBuySeconds();
+            return;
+        }
         for (String arenaId : new HashSet<>(testArenas)) {
-            ArenaSession session = session(arenaId);
-            if (session == null) {
+            if (session(arenaId) == null) {
                 testArenas.remove(arenaId);
-                continue;
-            }
-            GameState state = session.getState();
-            if (state == GameState.FREEZE) {
-                ArenaAdmin.holdFreeze(session, 20 * 60, plugin.getLogger());
             }
         }
+        if (testArenas.isEmpty()) {
+            restoreBuySeconds();
+            return;
+        }
+        ensureInfiniteBuy();
+    }
+
+    private void ensureInfiniteBuy() {
+        if (savedBuySeconds != null) return;
+        int old = ArenaAdmin.setBuySeconds(plugin.getWbd(), 24 * 60 * 60,
+                plugin.getLogger());
+        if (old >= 0) {
+            savedBuySeconds = old;
+            plugin.getLogger().info("测试模式：购买时间已改为无限（原 buy-seconds=" + old + "）。");
+        }
+    }
+
+    private void restoreBuySeconds() {
+        if (savedBuySeconds == null) return;
+        ArenaAdmin.setBuySeconds(plugin.getWbd(), savedBuySeconds, plugin.getLogger());
+        plugin.getLogger().info("测试模式结束：购买时间已还原为 " + savedBuySeconds + " 秒。");
+        savedBuySeconds = null;
     }
 
     private void removePhantom(ArenaSession session) {

@@ -148,6 +148,52 @@ public final class ArenaAdmin {
         }
     }
 
+    /**
+     * 改 WBD 的 {@code buy-seconds}（LIVE 阶段开局后仍允许购买的秒数）。
+     *
+     * <p>WBD 的购买窗口由这个值决定：FREEZE 阶段永远可买，进入 LIVE 之后
+     * 只有前 {@code buy-seconds} 秒还能买。维护模式要「购买时间无限」，
+     * 把它临时调到一个极大的值即可 —— 反正场里只有管理员一个人。
+     *
+     * @return 改动前的值，读不到时返回 -1
+     */
+    public static int setBuySeconds(com.warz.bombdefuse.WarZBombDefusePlugin wbd,
+                                    int seconds, Logger logger) {
+        try {
+            Object settings = settings(wbd, logger);
+            if (settings == null) return -1;
+            java.lang.reflect.Field field =
+                    settings.getClass().getField("buySeconds");
+            int old = field.getInt(settings);
+            field.setInt(settings, seconds);
+            return old;
+        } catch (Throwable t) {
+            logger.warning("管理面板：调整购买时间失败：" + t);
+            return -1;
+        }
+    }
+
+    /** 读当前的 {@code buy-seconds}；读不到返回 -1。 */
+    public static int buySeconds(com.warz.bombdefuse.WarZBombDefusePlugin wbd, Logger logger) {
+        try {
+            Object settings = settings(wbd, logger);
+            if (settings == null) return -1;
+            return settings.getClass().getField("buySeconds").getInt(settings);
+        } catch (Throwable t) {
+            return -1;
+        }
+    }
+
+    private static Object settings(com.warz.bombdefuse.WarZBombDefusePlugin wbd, Logger logger) {
+        try {
+            if (wbd == null || wbd.getConfigManager() == null) return null;
+            return wbd.getConfigManager().getSettings();
+        } catch (Throwable t) {
+            logger.warning("管理面板：读取 WBD 设置失败：" + t);
+            return null;
+        }
+    }
+
     /** 把冻结阶段直接结束（进入对战）。 */
     public static boolean endFreeze(ArenaSession session, int ticks, Logger logger) {
         if (session == null) return false;
