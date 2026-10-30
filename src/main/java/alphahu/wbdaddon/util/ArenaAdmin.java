@@ -127,6 +127,41 @@ public final class ArenaAdmin {
         }
     }
 
+    /**
+     * 把冻结阶段的剩余时间顶到指定值（只往上顶，不会缩短）。
+     *
+     * <p>测试模式用它续「购买时间」：每秒把剩余冻结时间顶回一分钟，
+     * 玩家就一直停在买枪阶段。
+     */
+    public static boolean holdFreeze(ArenaSession session, int ticks, Logger logger) {
+        if (session == null) return false;
+        resolve(logger);
+        if (stateTicksField == null) return false;
+        try {
+            if (stateTicksField.getInt(session) < ticks) {
+                stateTicksField.setInt(session, ticks);
+            }
+            return true;
+        } catch (Throwable t) {
+            logger.warning("管理面板：延长购买阶段失败：" + t);
+            return false;
+        }
+    }
+
+    /** 把冻结阶段直接结束（进入对战）。 */
+    public static boolean endFreeze(ArenaSession session, int ticks, Logger logger) {
+        if (session == null) return false;
+        resolve(logger);
+        if (stateTicksField == null) return false;
+        try {
+            stateTicksField.setInt(session, Math.max(1, ticks));
+            return true;
+        } catch (Throwable t) {
+            logger.warning("管理面板：结束购买阶段失败：" + t);
+            return false;
+        }
+    }
+
     /** 立刻给玩家加钱（受 WBD 金钱上限约束）。 */
     public static boolean addMoney(ArenaSession session, Player player, int amount, Logger logger) {
         if (session == null || player == null) return false;

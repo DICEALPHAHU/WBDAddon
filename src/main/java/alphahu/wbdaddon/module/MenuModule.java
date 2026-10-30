@@ -41,6 +41,7 @@ import java.util.Date;
 import java.util.LinkedHashMap;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -89,6 +90,9 @@ public class MenuModule implements AddonModule, Listener {
 
     /** 测试模式里塞进去的「幽灵玩家」记录，key = 竞技场 id。 */
     private final Map<String, UUID> phantoms = new ConcurrentHashMap<>();
+
+    /** 测试模式的看护任务：维持无限购买时间。 */
+    private org.bukkit.scheduler.BukkitTask testTask;
 
     /** 当前这场比赛已经计入过的玩家，避免离场和比赛结束重复累加。 */
     private final Map<String, Set<UUID>> counted = new ConcurrentHashMap<>();
@@ -139,6 +143,8 @@ public class MenuModule implements AddonModule, Listener {
         }
 
         Bukkit.getPluginManager().registerEvents(this, plugin);
+        // 单人测试模式：每秒把冻结（购买）阶段续上，做到「购买时间无限」
+        this.testTask = Bukkit.getScheduler().runTaskTimer(plugin, this::tickTestArenas, 40L, 20L);
         plugin.getLogger().info("主菜单已启动：/wbda 或 "
                 + (keybind ? "Shift+F " : "命令 ")
                 + "打开，已载入 "
@@ -147,6 +153,10 @@ public class MenuModule implements AddonModule, Listener {
 
     @Override
     public void onDisable() {
+        if (testTask != null) {
+            testTask.cancel();
+            testTask = null;
+        }
         HandlerList.unregisterAll(this);
         for (Player player : Bukkit.getOnlinePlayers()) {
             if (player.getOpenInventory().getTopInventory().getHolder() instanceof MenuHolder) {
@@ -312,6 +322,8 @@ public class MenuModule implements AddonModule, Listener {
                     adminRevive(player);
                 } else if (slot == 15) {
                     adminSkipRoundEnd(player);
+                } else if (slot == 17) {
+                    endFreeze(player);
                 } else if (slot == 16) {
                     open(player, Screen.ADMIN_DATA, null, null);
                 } else if (slot == 22) {
@@ -437,6 +449,24 @@ public class MenuModule implements AddonModule, Listener {
             if (record.getTeam() == team) count++;
         }
         return count;
+    }
+
+    private void endFreeze(Player admin) {
+        ArenaSession session = sessionOf(admin);
+        if (session == null) {
+            admin.sendMessage(color("&c你不在任何竞技场里。"));
+            return;
+        }
+        if (session.getState() != GameState.FREEZE) {
+            admin.sendMessage(color("&c当前不在购买阶段。"));
+            return;
+        }
+        if (ArenaAdmin.endFreeze(session, 1, plugin.getLogger())) {
+            admin.closeInventory();
+            admin.sendMessage(color("&a已结束购买阶段，进入对战。"));
+        } else {
+            admin.sendMessage(color("&c操作失败（可能是 WBD 版本差异）。"));
+        }
     }
 
     private void adminMoney(Player admin, boolean big) {
@@ -692,6 +722,9 @@ public class MenuModule implements AddonModule, Listener {
         inventory.setItem(15, item(Material.CLOCK, "&e跳过回合间隔",
                 "&7当前是回合结束时，立即进入下一回合",
                 "&7（不在回合结束阶段则无效）"));
+
+        inventory.setItem(17, item(Material.IRON_DOOR, "&e结束购买阶段",
+                "&7立刻进入对战阶段（测试模式里购买时间无限）"));
 
         inventory.setItem(16, item(Material.CHEST, "&e数据管理",
                 "&7清除玩家生涯数据 / 比赛记录"));
@@ -1183,6 +1216,28 @@ public class MenuModule implements AddonModule, Listener {
         ArenaAdmin.setRoundLocked(session, false, plugin.getLogger());
         Player admin = Bukkit.getPlayer(event.getPlayer().getUniqueId());
         broadcastArena(arenaId, "&e已有第二名玩家进场，单人测试模式结束，回合判定恢复正常。");
+    }
+
+    /**
+     * 单人测试模式：把冻结（购买）阶段一直续着。
+     *
+     * <p>WBD 的冻结阶段是唯一的买枪窗口，默认只有十几秒；一个人测东西时
+     * 光挑枪就用完了。这里每秒把剩余冻结时间顶回 60 秒，等于「购买时间无限」。
+     * 想真正开打时按面板上的「结束购买阶段」，把剩余时间打到 1 tick 即可。
+     */
+    private void tickTestArenas() {
+        if (testArenas.isEmpty()) return;
+        for (String arenaId : new HashSet<>(testArenas)) {
+            ArenaSession session = session(arenaId);
+            if (session == null) {
+                testArenas.remove(arenaId);
+                continue;
+            }
+            GameState state = session.getState();
+            if (state == GameState.FREEZE) {
+                ArenaAdmin.holdFreeze(session, 20 * 60, plugin.getLogger());
+            }
+        }
     }
 
     private void removePhantom(ArenaSession session) {
