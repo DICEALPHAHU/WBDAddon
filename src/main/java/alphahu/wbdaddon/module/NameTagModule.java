@@ -3,6 +3,7 @@ package alphahu.wbdaddon.module;
 import alphahu.wbdaddon.WBDAddon;
 import alphahu.wbdaddon.api.AddonMode;
 import org.bukkit.Bukkit;
+import org.bukkit.GameMode;
 import org.bukkit.entity.Player;
 import org.bukkit.scheduler.BukkitTask;
 import org.bukkit.scoreboard.Scoreboard;
@@ -50,6 +51,9 @@ public class NameTagModule implements AddonModule {
     /** 观察者 -> 被我们藏起来的「对方观战者」。 */
     private final Map<UUID, Set<UUID>> hiddenSpectators = new ConcurrentHashMap<>();
 
+    /** 被我们临时抬出观战模式、以便互相看见的观战者。 */
+    private final Set<UUID> revealed = ConcurrentHashMap.newKeySet();
+
     private boolean hideEnemySpectators;
 
     private BukkitTask task;
@@ -96,6 +100,7 @@ public class NameTagModule implements AddonModule {
             task = null;
         }
         cleanupAll();
+        restoredAll();
         plugin.getLogger().info("昵称标签已卸载。");
     }
 
@@ -147,7 +152,7 @@ public class NameTagModule implements AddonModule {
             }
         }
 
-        syncHiddenSpectators(viewer, mode, teamId);
+        syncSpectatorVisibility(viewer, mode, teamId);
 
         Team team = board.getTeam(HIDE_TEAM);
         if (team == null) {
@@ -171,32 +176,52 @@ public class NameTagModule implements AddonModule {
     }
 
     /**
-     * 对方阵营的观战者，对彼此直接隐身。
+     * 观战者之间的可见性。
      *
-     * <p>光靠隐藏名牌挡不住小地图：JourneyMap 画的是实体列表，两个观战者
-     * 都不属于任何队伍时，客户端会把对方当成「路人」画在地图上，于是我方
-     * 存活者的位置就被对面的观战者看光了。
+     * <h2>要解决的是什么</h2>
      *
-     * <p>观战者在游戏里本来就没有实体可见性，直接 {@code hidePlayer} 掉，
-     * 客户端连实体都收不到，小地图自然没有可画的东西。
+     * <p>小地图（JourneyMap）画的是**客户端收到的实体列表**，不是服务端的玩家列表。
+     * 只要实体同步下来，地图上就有一个点，队伍分组补丁只会给它换个颜色，藏不掉。
+     *
+     * <p>所以观战者能不能被看见，取决于实体可见性，规则要分两种人：
+     * <ul>
+     *   <li><b>敌方观战者</b> —— 不能让它出现在我方观战者的小地图上，否则我方
+     *       存活者的位置会被对面的死人全程直播（原实现就是处理这一种）；</li>
+     *   <li><b>己方观战者</b> —— 必须看得见。原来一视同仁地 {@code hidePlayer}，
+     *       结果同阵营的观战者互相隐身，雷达上一个人都没有。</li>
+     * </ul>
+     *
+     * <p>另外还有一个容易忽略的点：{@code GameMode.SPECTATOR} 的玩家**永远看不到
+     * 其他观战者**，这是原版客户端行为，跟服务端发送什么无关。观战者互相要看得见，
+     * 就得把他们放到非观战的游戏模式里 —— 这正是 {@code spectator-visible-gamemode}
+     * 存在的原因（默认 ADVENTURE）。WBD 每 tick 会把阵亡玩家强制拉回观战模式，
+     * 所以这一步必须持续重设，不能只做一次。
      */
-    private void syncHiddenSpectators(Player viewer, AddonMode mode, String teamId) {
+    private void syncSpectatorVisibility(Player viewer, AddonMode mode, String teamId) {
         Set<UUID> hidden = hiddenSpectators.computeIfAbsent(viewer.getUniqueId(),
                 k -> ConcurrentHashMap.newKeySet());
-        if (!hideEnemySpectators) {
-            clearHidden(viewer, hidden);
-            return;
-        }
+        boolean viewerIsSpectator = mode != null && !mode.isAlive(viewer);
+        GameMode revealMode = spectatorRevealMode();
 
         Set<UUID> desired = new HashSet<>();
         for (Player other : Bukkit.getOnlinePlayers()) {
             if (other.equals(viewer)) continue;
             AddonMode otherMode = plugin.getApi().getModeFor(other);
             if (otherMode != mode) continue;
-            if (otherMode.isAlive(other)) continue;           // 只管对方的观战者
+            boolean otherAlive = otherMode.isAlive(other);
             String otherTeam = otherMode.getTeamId(other);
-            if (otherTeam == null || otherTeam.equals(teamId)) continue;
-            desired.add(other.getUniqueId());
+
+            // 己方观战者：确保可见，并且把双方从「观战看不到观战」里救出来
+            if (!otherAlive && otherTeam != null && otherTeam.equals(teamId)) {
+                revealSpectator(viewer, viewerIsSpectator, revealMode);
+                revealSpectator(other, true, revealMode);
+                continue;
+            }
+            // 敌方观战者：彻底隐藏（不给实体，小地图就没有点）
+            if (!otherAlive && hideEnemySpectators
+                    && (otherTeam == null || !otherTeam.equals(teamId))) {
+                desired.add(other.getUniqueId());
+            }
         }
 
         for (UUID id : new HashSet<>(hidden)) {
@@ -211,6 +236,35 @@ public class NameTagModule implements AddonModule {
             if (other == null) continue;
             viewer.hidePlayer(plugin, other);
             hidden.add(id);
+        }
+    }
+
+    /**
+     * 让观战者互相看得见：必要时把观战者的游戏模式临时抬到非观战模式。
+     *
+     * <p>只在「确实是观战者」时动手，存活玩家的模式一律不碰。
+     */
+    private void revealSpectator(Player player, boolean shouldReveal, GameMode revealMode) {
+        if (!shouldReveal || revealMode == null) return;
+        if (player.getGameMode() != GameMode.SPECTATOR) return;
+        try {
+            player.setGameMode(revealMode);
+            revealed.add(player.getUniqueId());
+        } catch (Throwable ignored) {
+            // 少数端上切模式会被拒，忽略即可，下一次同步再试
+        }
+    }
+
+    /** 配置里指定的「观战者互相可见」游戏模式；null 表示不改模式。 */
+    private GameMode spectatorRevealMode() {
+        String raw = plugin.getConfig()
+                .getString("modules.name-tag.spectator-visible-gamemode", "ADVENTURE");
+        if (raw == null || raw.isBlank() || raw.trim().equalsIgnoreCase("NONE")) return null;
+        try {
+            GameMode mode = GameMode.valueOf(raw.trim().toUpperCase());
+            return mode == GameMode.SPECTATOR ? null : mode;
+        } catch (IllegalArgumentException e) {
+            return GameMode.ADVENTURE;
         }
     }
 
@@ -247,4 +301,16 @@ public class NameTagModule implements AddonModule {
         syncedBoards.clear();
         hiddenSpectators.clear();
     }
+
+    /**
+     * 模块卸载/玩家离场时，把被我们抬出观战模式的人交还给 WBD。
+     *
+     * <p>不主动把游戏模式改回 SPECTATOR：WBD 自己有一套
+     * {@code enforceSpectatorState} 在持续校正，我们这边乱改会和它抢。
+     * 只要人不在 {@code revealed} 里，WBD 下一次校正就会接管。
+     */
+    private void restoredAll() {
+        revealed.clear();
+    }
+
 }
