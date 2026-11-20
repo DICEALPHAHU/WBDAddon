@@ -2,6 +2,13 @@ package alphahu.wbdaddon.module;
 
 import alphahu.wbdaddon.WBDAddon;
 import alphahu.wbdaddon.api.AddonMode;
+import com.comphenix.protocol.PacketType;
+import com.comphenix.protocol.ProtocolLibrary;
+import com.comphenix.protocol.ProtocolManager;
+import com.comphenix.protocol.events.ListenerPriority;
+import com.comphenix.protocol.events.PacketAdapter;
+import com.comphenix.protocol.events.PacketEvent;
+import com.comphenix.protocol.events.PacketListener;
 import com.warz.bombdefuse.api.WbdPlayerEliminatedEvent;
 import com.warz.bombdefuse.arena.ArenaSession;
 import com.warz.bombdefuse.arena.PlayerRecord;
@@ -13,8 +20,6 @@ import org.bukkit.event.EventHandler;
 import org.bukkit.event.HandlerList;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
-import org.bukkit.event.block.Action;
-import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.scheduler.BukkitTask;
 
 import java.util.ArrayList;
@@ -68,6 +73,8 @@ public class SpectateCameraModule implements AddonModule, Listener {
     private final Map<UUID, Location> lastLocation = new ConcurrentHashMap<>();
 
     private BukkitTask task;
+    private ProtocolManager protocol;
+    private PacketListener useListener;
     private long intervalTicks;
     private boolean auto;
     private boolean onlyTeammates;
@@ -116,6 +123,9 @@ public class SpectateCameraModule implements AddonModule, Listener {
                 .getLong("modules.spectate-camera.death-hold-ticks", 30L));
 
         Bukkit.getPluginManager().registerEvents(this, plugin);
+        if (keySwitch) {
+            installKeyListener();
+        }
         this.task = Bukkit.getScheduler().runTaskTimer(plugin, this::tick, 40L, intervalTicks);
         plugin.getLogger().info("观战第一视角已启动：" + (auto ? "阵亡后自动跟随存活队友" : "手动 /spectate")
                 + (onlyTeammates ? "，只跟同阵营" : "") + "。");
@@ -123,6 +133,14 @@ public class SpectateCameraModule implements AddonModule, Listener {
 
     @Override
     public void onDisable() {
+        if (useListener != null && protocol != null) {
+            try {
+                protocol.removePacketListener(useListener);
+            } catch (Throwable ignored) {
+                // 插件卸载晚期移除监听器可能失败，随插件一起失效
+            }
+            useListener = null;
+        }
         if (task != null) {
             task.cancel();
             task = null;
@@ -237,31 +255,66 @@ public class SpectateCameraModule implements AddonModule, Listener {
     }
 
     /**
-     * 左键看上一个队友、右键看下一个。
+     * 鼠标左 / 右键切换观战目标。
      *
-     * <p>这里**不能**加 {@code ignoreCancelled = true}：观战者点空气时，
-     * WBD 的保护区会把这个交互事件取消掉，一旦带上这个参数，本监听器就再也收不到事件——
-     * 表现就是「观战时左右键没反应」。
+     * <h2>为什么走协议而不是 {@code PlayerInteractEvent}</h2>
+     *
+     * <p>观战模式下玩家处于 SPECTATOR，客户端在这种游戏模式下**根本不会发
+     * 左/右键交互包**给服务端，Bukkit 的 {@code PlayerInteractEvent} 因此永远不会触发 ——
+     * 这正是「按了没反应」的根因。
+     *
+     * <p>能拿到的只有 {@code USE_ITEM}（右键）与 {@code ARM_ANIMATION}（左键挥动），
+     * 这两个包在观战时客户端照样会发。所以用一个 ProtocolLib 的收包监听器接住它们。
      */
-    @EventHandler(priority = EventPriority.LOWEST)
-    public void onInteract(PlayerInteractEvent event) {
-        if (!keySwitch) return;
-        if (event.getAction() != Action.LEFT_CLICK_AIR
-                && event.getAction() != Action.RIGHT_CLICK_AIR) {
+    private void installKeyListener() {
+        try {
+            this.protocol = ProtocolLibrary.getProtocolManager();
+        } catch (Throwable t) {
+            this.protocol = null;
+        }
+        if (protocol == null) {
+            plugin.getLogger().warning("观战第一视角：ProtocolLib 不可用，"
+                    + "鼠标左右键切换已停用（/spectate 仍可用）。");
             return;
         }
-        Player player = event.getPlayer();
-        if (player.getGameMode() != GameMode.SPECTATOR) return;
-        AddonMode mode = plugin.getApi() == null ? null : plugin.getApi().getModeFor(player);
-        if (mode == null || mode.isAlive(player)) return;
+        this.useListener = new PacketAdapter(plugin, ListenerPriority.NORMAL,
+                PacketType.Play.Client.USE_ITEM,
+                PacketType.Play.Client.ARM_ANIMATION) {
+            @Override
+            public void onPacketReceiving(PacketEvent event) {
+                try {
+                    handleKey(event.getPlayer(), event.getPacketType());
+                } catch (Throwable t) {
+                    if (debugKeys()) {
+                        plugin.getLogger().warning("观战第一视角：处理按键失败：" + t);
+                    }
+                }
+            }
+        };
+        protocol.addPacketListener(useListener);
+    }
 
-        long now = System.currentTimeMillis();
-        Long last = lastSwitch.put(player.getUniqueId(), now);
-        if (last != null && now - last < 250L) return;
+    /** 收包线程不能碰玩家状态，转发回主线程。 */
+    private void handleKey(Player player, PacketType type) {
+        if (player == null || !player.isOnline()) return;
+        if (!keySwitch) return;
+        boolean forward = type == PacketType.Play.Client.USE_ITEM;
+        Bukkit.getScheduler().runTask(plugin, () -> {
+            if (!player.isOnline()) return;
+            if (player.getGameMode() != GameMode.SPECTATOR) return;
+            AddonMode mode = plugin.getApi() == null ? null : plugin.getApi().getModeFor(player);
+            if (mode == null) return;
+            if (mode.isAlive(player)) return;
 
-        boolean forward = event.getAction() == Action.RIGHT_CLICK_AIR;
-        cycle(player, forward ? 1 : -1);
-        event.setCancelled(true);
+            long now = System.currentTimeMillis();
+            Long last = lastSwitch.put(player.getUniqueId(), now);
+            if (last != null && now - last < 200L) return;
+            cycle(player, forward ? 1 : -1);
+        });
+    }
+
+    private boolean debugKeys() {
+        return plugin.getConfig().getBoolean("modules.spectate-camera.debug", false);
     }
 
     /**

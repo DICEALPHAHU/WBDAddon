@@ -92,6 +92,15 @@ modules:
     # 身上已经有同类武器就不再发（上一回合活下来、自己买了枪，都不会被覆盖）
     only-if-missing: true
 
+    # 回合开始后至少等多少 tick 再开始兑现发放。
+    # WBD 的清包任务是延迟执行的，所以本模块不靠事件时序发枪，而是先登记意图、
+    # 等背包真的被清空后再补发。40 tick = 2 秒，足够覆盖传送到出生点与清包。
+    delay-ticks: 40
+
+    # 从登记那一刻起，最多等多少 tick 还没兑现就放弃（避免残留到下一回合）。
+    # 200 tick = 10 秒
+    expire-ticks: 200
+
     debug: false
 
   # ----------------------------------------------------------
@@ -511,7 +520,9 @@ modules:
     # BossBar 颜色：PINK / BLUE / RED / GREEN / YELLOW / PURPLE / WHITE
     bar-color: YELLOW
 
-    # 鼠标左键 / 右键切换上一个 / 下一个队友（仅阵亡观战时生效）
+    # 鼠标左键 / 右键切换上一个 / 下一个队友（仅阵亡观战时生效）。
+    # 观战模式下客户端不会发交互事件，这里走 ProtocolLib 收 USE_ITEM / ARM_ANIMATION 包，
+    # 所以需要服务器装有 ProtocolLib。
     key-switch: true
 
     # 全队阵亡时，把视角拉到最后一个队友倒下的位置（每人每次团灭只拉一次）
